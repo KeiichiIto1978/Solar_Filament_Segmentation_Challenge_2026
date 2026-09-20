@@ -233,3 +233,7 @@ kaggle.json
 *.onnx
 outputs/
 submissions/
+
+# Generated submissions and experiment outputs
+submission*.csv
+outputs/

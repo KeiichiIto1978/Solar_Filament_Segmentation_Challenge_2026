@@ -1,0 +1,23 @@
+# Filesystem layout of the project and of the competition dataset.
+#
+# No absolute path is stored in the source tree: every entry below is either
+# absolute or relative to the repository root.  The dataset root can be
+# relocated without editing this file by setting the environment variable
+# MAGFILO_ROOT, which takes precedence over `dataset.root`.
+
+dataset:
+  # Root of the MAGFiLO 1.0 Kaggle 2026 download (not redistributable, CC BY-NC 4.0).
+  root: MAGFiLO_1.0_Kaggle_2026
+  # The three entries below are relative to `dataset.root`.
+  train_images: train/train_images
+  train_annotations: train/MAGFiLO_1.0_Annotations_kaggle2026_train.json
+  test_images: test/test_images
+
+project:
+  # Frozen cross-validation splits, relative to the repository root.
+  splits_dir: configs/splits
+
+image:
+  # Every GONG H-alpha frame in this dataset is 2048x2048, 8-bit grayscale.
+  height: 2048
+  width: 2048
