@@ -216,3 +216,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+MAGFiLO_1.0_Kaggle_2026/
+Working/
+# Claude Code local settings (CLAUDE.md itself IS tracked)
+.claude/
+.mcp.json
+
+# Kaggle credentials
+kaggle.json
+
+# Model weights / outputs
+*.pt
+*.pth
+*.ckpt
+*.onnx
+outputs/
+submissions/
