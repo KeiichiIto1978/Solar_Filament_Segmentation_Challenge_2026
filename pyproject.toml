@@ -1,0 +1,56 @@
+[project]
+name = "filament"
+version = "0.1.0"
+description = "Instance segmentation of solar dark filaments in GONG H-alpha images (MAGFiLO / Kaggle 2026)"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+    "numpy>=1.26,<2.2",
+    "pandas>=2.2,<2.3",
+    "pycocotools>=2.0.8,<2.1",
+    "pyyaml>=6.0,<7.0",
+    "matplotlib>=3.9,<3.11",
+    "pillow>=10.4,<12.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9.0",
+    "ruff>=0.6,<0.13",
+    "mypy>=1.11,<2.0",
+    "ipykernel>=6.29,<7.0",
+    "nbformat>=5.10,<6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/filament"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["MAGFiLO_1.0_Kaggle_2026", "Working"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "dataset: requires the MAGFiLO dataset to be present locally",
+]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["filament"]
+ignore_missing_imports = true
+warn_unused_ignores = true
