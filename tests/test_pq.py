@@ -8,12 +8,18 @@ either side of the 0.5 threshold, which is where the metric is discontinuous.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from filament.metrics.pq import PQResult, compute_pq, iou_dice_matrices
+from filament.metrics.pq import (
+    PQResult,
+    compute_pq,
+    iou_dice_matrices,
+    iou_dice_matrices_rle,
+)
 from filament.submit.rle import mask_to_rle
 
 # A narrow frame is enough for one-dimensional bars and keeps the tests fast.
@@ -56,8 +62,24 @@ def _pred(*masks: np.ndarray, stem: str = STEM) -> pd.DataFrame:
     return _frame(ids, list(masks))
 
 
-def _score(gt: pd.DataFrame, pred: pd.DataFrame, **kwargs: object) -> PQResult:
-    return compute_pq(gt, pred, height=HEIGHT, width=WIDTH, **kwargs)  # type: ignore[arg-type]
+Scorer = Callable[..., PQResult]
+
+
+@pytest.fixture(params=("rle", "dense"))
+def score(request: pytest.FixtureRequest) -> Scorer:
+    """Score a case on both backends: they must agree on every one of them."""
+
+    def _score(gt: pd.DataFrame, pred: pd.DataFrame, **kwargs: object) -> PQResult:
+        return compute_pq(
+            gt,
+            pred,
+            height=HEIGHT,
+            width=WIDTH,
+            backend=request.param,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    return _score
 
 
 def _assert_pq_factorizes(result: PQResult) -> None:
@@ -91,18 +113,20 @@ def test_iou_of_two_empty_masks_is_zero_rather_than_undefined() -> None:
     assert iou[0, 0] == 0.0
 
 
-def test_a_prediction_just_below_the_threshold_costs_a_false_positive_and_a_negative() -> None:
+def test_a_prediction_just_below_the_threshold_costs_a_false_positive_and_a_negative(
+    score: Scorer,
+) -> None:
     # Shift 342: IoU = 658 / 1342 = 0.4903, just under the 0.5 gate.
-    result = _score(_gt(_bar(0)), _pred(_bar(342)))
+    result = score(_gt(_bar(0)), _pred(_bar(342)))
 
     assert (result.tp, result.fp, result.fn) == (0, 1, 1)
     assert result.pq == 0.0
     _assert_pq_factorizes(result)
 
 
-def test_a_prediction_just_above_the_threshold_is_a_true_positive() -> None:
+def test_a_prediction_just_above_the_threshold_is_a_true_positive(score: Scorer) -> None:
     # Shift 324: IoU = 676 / 1324 = 0.5106, just over the gate.
-    result = _score(_gt(_bar(0)), _pred(_bar(324)))
+    result = score(_gt(_bar(0)), _pred(_bar(324)))
 
     assert (result.tp, result.fp, result.fn) == (1, 0, 0)
     assert result.pq == pytest.approx(676 / 1324)
@@ -112,9 +136,9 @@ def test_a_prediction_just_above_the_threshold_is_a_true_positive() -> None:
     _assert_pq_factorizes(result)
 
 
-def test_missing_a_filament_costs_only_half_of_what_a_near_miss_costs() -> None:
-    near_miss = _score(_gt(_bar(0)), _pred(_bar(342)))
-    no_prediction = _score(_gt(_bar(0)), _pred())
+def test_missing_a_filament_costs_only_half_of_what_a_near_miss_costs(score: Scorer) -> None:
+    near_miss = score(_gt(_bar(0)), _pred(_bar(342)))
+    no_prediction = score(_gt(_bar(0)), _pred())
 
     # Both score zero here, but the near miss adds 1.0 to the denominator
     # against 0.5 for the silent miss; with other matches present that gap is
@@ -123,18 +147,20 @@ def test_missing_a_filament_costs_only_half_of_what_a_near_miss_costs() -> None:
     assert no_prediction.fp + no_prediction.fn == 1
 
 
-def test_predicting_nothing_turns_every_ground_truth_into_a_false_negative() -> None:
-    result = _score(_gt(_bar(0, 10), _bar(100, 10), _bar(200, 10)), _pred())
+def test_predicting_nothing_turns_every_ground_truth_into_a_false_negative(score: Scorer) -> None:
+    result = score(_gt(_bar(0, 10), _bar(100, 10), _bar(200, 10)), _pred())
 
     assert (result.tp, result.fp, result.fn) == (0, 0, 3)
     assert result.pq == 0.0
     _assert_pq_factorizes(result)
 
 
-def test_predictions_on_an_image_without_ground_truth_are_all_false_positives() -> None:
+def test_predictions_on_an_image_without_ground_truth_are_all_false_positives(
+    score: Scorer,
+) -> None:
     empty_gt = pd.DataFrame({"filament_id": [], "segmentation_rle": []}, dtype=str)
 
-    result = _score(
+    result = score(
         empty_gt,
         _pred(_bar(0, 10), _bar(100, 10)),
         annotator_images=[ANNOTATOR_IMAGE],
@@ -144,16 +170,16 @@ def test_predictions_on_an_image_without_ground_truth_are_all_false_positives() 
     assert result.pq == 0.0
 
 
-def test_an_empty_comparison_scores_zero_instead_of_dividing_by_zero() -> None:
+def test_an_empty_comparison_scores_zero_instead_of_dividing_by_zero(score: Scorer) -> None:
     empty = pd.DataFrame({"filament_id": [], "segmentation_rle": []}, dtype=str)
 
-    result = _score(empty, empty)
+    result = score(empty, empty)
 
     assert result == PQResult(pq=0.0, sq=0.0, rq=0.0, tp=0, fp=0, fn=0)
 
 
-def test_an_extra_prediction_is_counted_as_a_false_positive() -> None:
-    result = _score(_gt(_bar(0)), _pred(_bar(0), _bar(1200, 100)))
+def test_an_extra_prediction_is_counted_as_a_false_positive(score: Scorer) -> None:
+    result = score(_gt(_bar(0)), _pred(_bar(0), _bar(1200, 100)))
 
     assert (result.tp, result.fp, result.fn) == (1, 1, 0)
     assert result.pq == pytest.approx(1.0 / 1.5)
@@ -161,15 +187,15 @@ def test_an_extra_prediction_is_counted_as_a_false_positive() -> None:
     _assert_pq_factorizes(result)
 
 
-def test_identical_masks_score_a_perfect_one() -> None:
-    result = _score(_gt(_bar(0), _bar(1100, 100)), _pred(_bar(0), _bar(1100, 100)))
+def test_identical_masks_score_a_perfect_one(score: Scorer) -> None:
+    result = score(_gt(_bar(0), _bar(1100, 100)), _pred(_bar(0), _bar(1100, 100)))
 
     assert (result.tp, result.fp, result.fn) == (2, 0, 0)
     assert result.pq == 1.0
     _assert_pq_factorizes(result)
 
 
-def test_the_same_prediction_is_scored_once_per_annotator() -> None:
+def test_the_same_prediction_is_scored_once_per_annotator(score: Scorer) -> None:
     # One annotator drew one filament, the other drew two. The prediction
     # matches the shared one only, so it is a true positive twice and leaves a
     # false negative against the second annotator.
@@ -177,7 +203,7 @@ def test_the_same_prediction_is_scored_once_per_annotator() -> None:
     second = _gt(_bar(0), _bar(1200, 100), annotator_image=f"010401-{STEM}")
     gt = pd.concat([first, second], ignore_index=True)
 
-    result = _score(gt, _pred(_bar(0)))
+    result = score(gt, _pred(_bar(0)))
 
     assert (result.tp, result.fp, result.fn) == (2, 0, 1)
     assert result.pq == pytest.approx(2.0 / 2.5)
@@ -185,19 +211,49 @@ def test_the_same_prediction_is_scored_once_per_annotator() -> None:
 
 
 def test_predictions_for_an_unknown_image_are_reported_rather_than_ignored(
+    score: Scorer,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     other = _pred(_bar(0), stem="19990101000000Zz")
 
     with caplog.at_level(logging.WARNING, logger="filament.metrics.pq"):
-        result = _score(_gt(_bar(0)), pd.concat([_pred(_bar(0)), other], ignore_index=True))
+        result = score(_gt(_bar(0)), pd.concat([_pred(_bar(0)), other], ignore_index=True))
 
     assert (result.tp, result.fp, result.fn) == (1, 0, 0)
     assert "19990101000000Zz" in caplog.text
 
 
-def test_ground_truth_ids_without_an_annotator_prefix_are_rejected() -> None:
+def test_ground_truth_ids_without_an_annotator_prefix_are_rejected(score: Scorer) -> None:
     gt = _frame([f"{STEM}_1"], [_bar(0)])
 
     with pytest.raises(ValueError, match="Malformed ground-truth image id"):
-        _score(gt, _pred(_bar(0)))
+        score(gt, _pred(_bar(0)))
+
+
+def test_the_rle_backend_reproduces_the_dense_matrices() -> None:
+    """The fast path must be a pure optimization, not a different metric."""
+    gt_masks = [_bar(0), _bar(600, 200), np.zeros((HEIGHT, WIDTH), dtype=bool)]
+    pred_masks = [_bar(324), _bar(0), _bar(610, 180), _bar(1300, 90)]
+
+    dense_iou, dense_dice = iou_dice_matrices(np.stack(gt_masks), np.stack(pred_masks))
+    rle_iou, rle_dice = iou_dice_matrices_rle(
+        [mask_to_rle(mask) for mask in gt_masks],
+        [mask_to_rle(mask) for mask in pred_masks],
+        HEIGHT,
+        WIDTH,
+    )
+
+    assert rle_iou == pytest.approx(dense_iou)
+    assert rle_dice == pytest.approx(dense_dice)
+
+
+def test_the_rle_backend_handles_an_empty_side() -> None:
+    iou, dice = iou_dice_matrices_rle([], [mask_to_rle(_bar(0))], HEIGHT, WIDTH)
+
+    assert iou.shape == (0, 1)
+    assert dice.shape == (0, 1)
+
+
+def test_an_unknown_backend_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown backend"):
+        compute_pq(_gt(_bar(0)), _pred(_bar(0)), backend="numpy")  # type: ignore[arg-type]
