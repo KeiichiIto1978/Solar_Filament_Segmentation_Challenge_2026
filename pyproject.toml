@@ -13,7 +13,22 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
     "matplotlib>=3.9,<3.11",
     "pillow>=10.4,<12.0",
+    "torch>=2.4,<3.0",
+    "torchvision>=0.19,<1.0",
+    "segmentation-models-pytorch>=0.4,<0.6",
+    "opencv-python-headless>=4.10,<5.0",
 ]
+
+# torch is installed from the CPU wheel index: this machine has no GPU, and
+# Kaggle notebooks already ship a CUDA build that must not be replaced.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
 
 [dependency-groups]
 dev = [

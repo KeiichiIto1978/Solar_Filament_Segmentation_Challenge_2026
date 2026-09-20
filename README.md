@@ -27,12 +27,19 @@ What works today:
 - a submission can be checked for overlapping masks before it is uploaded;
 - the cross-validation split is frozen and committed.
 
+Scoring one annotator's drawing against the other annotators of the same image
+gives PQ 0.73 on fold 0, which is the practical ceiling this pipeline is
+measured against.
+
 ## Requirements
 
 - Python 3.11
 - [uv](https://docs.astral.sh/uv/)
 
-No GPU is needed for anything in this repository yet.
+`torch` is pinned to its **CPU build**: development and evaluation need no GPU,
+and training runs on Kaggle, whose notebooks ship their own CUDA build. To
+train elsewhere on a GPU, replace the two torch lines with a build matching
+your CUDA version from [pytorch.org](https://pytorch.org/get-started/locally/).
 
 ## Setup
 
@@ -42,8 +49,32 @@ cd Solar_Filament_Segmentation_Challenge_2026
 uv sync
 ```
 
-`uv sync` installs the pinned dependency set. `requirements.txt` holds the same
-versions for environments without uv.
+`uv sync` installs the pinned dependency set. For environments without uv,
+`requirements.txt` holds the same versions:
+
+```bash
+pip install -r requirements.txt
+```
+
+Regenerate that file after changing a dependency:
+
+```bash
+uv run python scripts/export_requirements.py
+```
+
+### Running on Kaggle
+
+Training runs on Kaggle notebooks (two T4 GPUs). Install this package there in
+one cell, with the notebook's Internet setting enabled:
+
+```python
+!pip install -q --no-deps "git+https://github.com/KeiichiIto1978/Solar_Filament_Segmentation_Challenge_2026.git@main"
+```
+
+`--no-deps` leaves Kaggle's preinstalled CUDA build of torch alone; replacing it
+costs minutes and risks a CUDA mismatch. Pushing to `main` and rerunning that
+cell is the whole update procedure, so the notebook never holds a second copy
+of the code. Pin `@main` to a commit hash when a run has to be reproducible.
 
 ## Dataset
 
