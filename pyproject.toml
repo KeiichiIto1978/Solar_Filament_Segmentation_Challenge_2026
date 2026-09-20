@@ -48,6 +48,11 @@ addopts = "-ra"
 markers = [
     "dataset: requires the MAGFiLO dataset to be present locally",
 ]
+filterwarnings = [
+    # pycocotools 2.0.11 calls __array__(copy=False) internally, which numpy 2.1
+    # deprecates. It is out of our control and does not affect the decoded mask.
+    "ignore:__array__ implementation doesn't accept a copy keyword:DeprecationWarning",
+]
 
 [tool.mypy]
 python_version = "3.11"
