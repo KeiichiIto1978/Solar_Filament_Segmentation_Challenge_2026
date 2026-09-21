@@ -1,0 +1,29 @@
+# Post-processing settings, tuned on fold 0 and frozen for the submission.
+#
+# Each value is the middle of its plateau rather than the outright best point:
+# the highest PQ among a few hundred settings on 142 frames is partly an
+# accident of those frames, and a value whose neighbours are also good is the
+# one that survives being applied elsewhere. The peak scored 0.3772 against
+# the 0.3756 recorded here; the difference is inside the noise of one fold.
+
+# Probability above which a pixel counts as filament.
+# Plateau: 0.3 to 0.7, all within 0.001 of each other. The maps are sharply
+# bimodal, so the cut-off barely matters.
+threshold: 0.5
+
+# Smallest region to emit, in pixels at 2048.
+# Plateau: 200 and 400. Raising it from 200 lost 50 true positives and removed
+# 166 false positives, which is the metric's break-even working as intended.
+# At 800 it collapses (PQ 0.332): too many real filaments go with it.
+min_area: 400
+
+# Rejoin fragments up to this far apart, in pixels at 1024. Zero disables it.
+# 8 to 32 all score within 0.003; 48 is clearly worse.
+join_gap: 24
+
+# Angle and off-axis tolerances for the rejoining, in degrees and pixels.
+# Both plateaus span the whole range tested, so neither is doing any work:
+# within 24 pixels there is rarely a second filament to confuse. Kept at mid
+# range in case another fold has frames where two filaments run close.
+join_angle: 50
+join_offset: 20
