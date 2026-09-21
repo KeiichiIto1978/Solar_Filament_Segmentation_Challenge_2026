@@ -126,7 +126,7 @@ PQ = Σ_{TP} IoU / ( |TP| + 0.5|FP| + 0.5|FN| )   … IoU > 0.5 のペアのみ 
 
 ## 8. 開発ルール
 
-- Python 3.11、パッケージ管理は `uv`
+- Python 3.12（Kaggle のノートブックと同じ系列に揃える）、パッケージ管理は `uv`
 - lint/format は `ruff`、型は `mypy`（strict までは求めない）
 - テストは `pytest`。**`src/filament/metrics/` は必ずテストを書く**（評価器が壊れると全実験が無意味になる）
 - 乱数 seed は固定し、split は一度決めたら変えない

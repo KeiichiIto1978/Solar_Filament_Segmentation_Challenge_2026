@@ -3,9 +3,10 @@ name = "filament"
 version = "0.1.0"
 description = "Instance segmentation of solar dark filaments in GONG H-alpha images (MAGFiLO / Kaggle 2026)"
 readme = "README.md"
-# 3.11 is what this is developed and locked against; the upper bound reaches
-# 3.13 because Kaggle notebooks run 3.12 and the package is installed there.
-requires-python = ">=3.11,<3.13"
+# Pinned to the Python that Kaggle notebooks run, which is where training and
+# inference happen. Developing against a different one would mean the tested
+# interpreter is not the one that produces the results.
+requires-python = ">=3.12,<3.13"
 license = { text = "Apache-2.0" }
 
 dependencies = [
@@ -51,7 +52,7 @@ packages = ["src/filament"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 extend-exclude = ["MAGFiLO_1.0_Kaggle_2026", "Working"]
 
 [tool.ruff.lint]
@@ -73,7 +74,7 @@ filterwarnings = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 packages = ["filament"]
 ignore_missing_imports = true
 warn_unused_ignores = true

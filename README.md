@@ -38,7 +38,7 @@ measured against.
 
 ## Requirements
 
-- Python 3.11
+- Python 3.12, the version Kaggle notebooks run
 - [uv](https://docs.astral.sh/uv/)
 
 `torch` is pinned to its **CPU build**: development and evaluation need no GPU,
