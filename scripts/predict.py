@@ -22,6 +22,7 @@ from filament.postprocess.instances import (
     DEFAULT_THRESHOLD,
     instances_to_rows,
 )
+from filament.postprocess.join import DEFAULT_MAX_ANGLE, DEFAULT_MAX_OFFSET
 from filament.submit.rle import write_submission
 from filament.training.loop import load_checkpoint
 
@@ -55,6 +56,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--min-area", type=int, default=DEFAULT_MIN_AREA, help="Smallest region to emit."
+    )
+    parser.add_argument(
+        "--join-gap",
+        type=float,
+        default=0.0,
+        help="Rejoin fragments up to this far apart, in pixels of the map. 0 disables it.",
+    )
+    parser.add_argument(
+        "--join-angle", type=float, default=DEFAULT_MAX_ANGLE, help="Angle tolerance in degrees."
+    )
+    parser.add_argument(
+        "--join-offset", type=float, default=DEFAULT_MAX_OFFSET, help="Off-axis tolerance."
     )
     parser.add_argument("--device", type=str, default=None, help="Force cpu or cuda.")
     parser.add_argument(
@@ -91,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
             min_area=args.min_area,
             device=args.device or "cpu",
             mask_disk=not args.no_disk_mask,
+            join_gap=args.join_gap,
+            join_angle=args.join_angle,
+            join_offset=args.join_offset,
         )
         if not instances:
             empty.append(stem)

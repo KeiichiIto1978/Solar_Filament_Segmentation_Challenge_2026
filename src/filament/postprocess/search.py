@@ -39,6 +39,7 @@ from filament.postprocess.instances import (
     extract_instances,
     instances_to_rows,
 )
+from filament.postprocess.join import DEFAULT_MAX_ANGLE, DEFAULT_MAX_OFFSET
 from filament.submit.rle import FULL_HEIGHT, SUBMISSION_COLUMNS
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,9 @@ def _default_builder(
         min_area=int(values.get("min_area", DEFAULT_MIN_AREA)),
         disk=disk,
         output_size=int(values["output_size"]),
+        join_gap=float(values.get("join_gap", 0.0)),
+        join_angle=float(values.get("join_angle", DEFAULT_MAX_ANGLE)),
+        join_offset=float(values.get("join_offset", DEFAULT_MAX_OFFSET)),
     )
 
 

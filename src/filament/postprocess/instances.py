@@ -29,6 +29,11 @@ import cv2
 import numpy as np
 
 from filament.data.disk import DEFAULT_MASK_MARGIN, Disk
+from filament.postprocess.join import (
+    DEFAULT_MAX_ANGLE,
+    DEFAULT_MAX_OFFSET,
+    connected_and_joined,
+)
 from filament.submit.rle import FULL_HEIGHT, mask_to_rle
 
 logger = logging.getLogger(__name__)
@@ -62,6 +67,9 @@ def extract_instances(
     disk: Disk | None = None,
     disk_margin: float = DEFAULT_MASK_MARGIN,
     output_size: int = FULL_HEIGHT,
+    join_gap: float = 0.0,
+    join_angle: float = DEFAULT_MAX_ANGLE,
+    join_offset: float = DEFAULT_MAX_OFFSET,
 ) -> list[Instance]:
     """Split a probability map into non-overlapping filament masks.
 
@@ -75,6 +83,10 @@ def extract_instances(
         disk_margin: Slack around the limb, in the same coordinates.
         output_size: Side length of the returned masks. Predictions are made at
             a reduced size and scored at 2048.
+        join_gap: Rejoin regions up to this far apart, in pixels of the map.
+            Zero switches the rejoining off, which is the plain behaviour.
+        join_angle: Largest angle between two regions' long axes, in degrees.
+        join_offset: How far one region may sit off the other's axis.
 
     Returns:
         Instances ordered by descending score. Their masks never overlap.
@@ -86,7 +98,13 @@ def extract_instances(
     if disk is not None:
         binary &= disk.mask(*binary.shape, margin=disk_margin).astype(np.uint8)
 
-    count, labels = cv2.connectedComponents(binary, connectivity=CONNECTIVITY)
+    count, labels = connected_and_joined(
+        binary,
+        connectivity=CONNECTIVITY,
+        max_gap=join_gap,
+        max_angle=join_angle,
+        max_offset=join_offset,
+    )
     instances = []
     for label in range(1, count):
         region = labels == label
