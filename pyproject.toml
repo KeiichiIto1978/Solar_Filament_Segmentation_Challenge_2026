@@ -3,7 +3,9 @@ name = "filament"
 version = "0.1.0"
 description = "Instance segmentation of solar dark filaments in GONG H-alpha images (MAGFiLO / Kaggle 2026)"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+# 3.11 is what this is developed and locked against; the upper bound reaches
+# 3.13 because Kaggle notebooks run 3.12 and the package is installed there.
+requires-python = ">=3.11,<3.13"
 license = { text = "Apache-2.0" }
 
 dependencies = [
