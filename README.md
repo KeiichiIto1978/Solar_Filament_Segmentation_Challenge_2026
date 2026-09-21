@@ -220,6 +220,7 @@ built, what it measured, what was learned, and what came next.
 |---|---|
 | [0 — Evaluation foundation](docs/experiments/phase0-evaluation-foundation.md) | PQ measurable locally; human agreement puts the ceiling at PQ 0.73 |
 | [1 — Semantic baseline](docs/experiments/phase1-semantic-baseline.md) | fold 0 PQ 0.3454, leaderboard 0.29 |
+| [2 — Choosing the source of the masks](docs/experiments/phase2-mask-source.md) | U-Net kept; a filter bank reached PQ 0.16 at fifteen times the cost |
 
 ## Repository layout
 
