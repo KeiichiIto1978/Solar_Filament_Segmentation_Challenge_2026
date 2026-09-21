@@ -1,0 +1,34 @@
+# Semantic baseline: U-Net over the whole disk, instances recovered afterwards
+# from connected regions. Exit target for Phase 1 is local PQ 0.25 on fold 0.
+fold: 0
+
+# 1024 rather than the native 2048: a batch of full-resolution frames does not
+# fit a T4, and the median filament is 1,228 pixels, which survives halving.
+image_size: 1024
+
+encoder: resnet34
+encoder_weights: imagenet
+
+epochs: 40
+batch_size: 4
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+# Same seed as the frozen split, so one number identifies the whole setup.
+seed: 20260921
+
+# Zero on Windows: every worker would re-read the 48 MB annotation file.
+# Raise it to 2 on Kaggle.
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase1_unet
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
