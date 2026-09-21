@@ -77,14 +77,18 @@ attach the competition data. The first cell brings the code in:
 ```python
 !git clone -q https://github.com/KeiichiIto1978/Solar_Filament_Segmentation_Challenge_2026.git /kaggle/working/repo
 !pip install -q segmentation-models-pytorch
-!pip install -q --no-deps -e /kaggle/working/repo
+import sys; sys.path.insert(0, "/kaggle/working/repo/src")
 ```
 
 The repository is cloned rather than installed from its URL because
 `configs/paths.yaml` and the frozen splits sit beside the package rather than
 inside it; a wheel would leave them behind and the run would be validated on a
-different set of frames. `--no-deps` leaves Kaggle's preinstalled CUDA build of
-torch alone, since replacing it costs minutes and risks a CUDA mismatch.
+different set of frames. The clone goes on `sys.path` rather than through pip:
+this is a pure Python package, so the import works either way, and skipping pip
+skips its interpreter-version check, which Kaggle's Python trips as it moves
+ahead of the version this is locked against. Kaggle's preinstalled CUDA build
+of torch is left alone, since replacing it costs minutes and risks a
+mismatch with the driver.
 
 Pushing to `main` and rerunning that cell is the whole update procedure, so the
 notebook never holds a second copy of the code. Check out a commit hash instead
