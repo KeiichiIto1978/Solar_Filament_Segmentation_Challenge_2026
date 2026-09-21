@@ -211,6 +211,16 @@ filament_id,segmentation_rle
   is never quoted.
 - Masks of the same image must not overlap, not even by one pixel.
 
+## Experiment records
+
+One record per phase, in [`docs/experiments/`](docs/experiments/): what was
+built, what it measured, what was learned, and what came next.
+
+| Phase | Outcome |
+|---|---|
+| [0 — Evaluation foundation](docs/experiments/phase0-evaluation-foundation.md) | PQ measurable locally; human agreement puts the ceiling at PQ 0.73 |
+| [1 — Semantic baseline](docs/experiments/phase1-semantic-baseline.md) | fold 0 PQ 0.3454, leaderboard 0.29 |
+
 ## Repository layout
 
 ```
