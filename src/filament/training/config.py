@@ -30,10 +30,11 @@ class AugmentationConfig:
 
 @dataclass(frozen=True)
 class LossConfig:
-    """Relative weight of the two loss terms."""
+    """Relative weight of the two loss terms, and how Dice reads the target."""
 
     dice_weight: float = 1.0
     bce_weight: float = 1.0
+    dice_majority: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,8 @@ class TrainConfig:
         output_dir: Where checkpoints and the resolved config are written.
         max_train_batches: Stop each epoch early. For smoke runs only.
         max_val_batches: Same, for validation.
+        vote_targets: Train against the share of annotators who drew each
+            pixel rather than against one annotator's own tracing.
     """
 
     fold: int = 0
@@ -72,6 +75,7 @@ class TrainConfig:
     output_dir: Path = Path("outputs/phase1_unet")
     max_train_batches: int | None = None
     max_val_batches: int | None = None
+    vote_targets: bool = False
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     loss: LossConfig = field(default_factory=LossConfig)
 

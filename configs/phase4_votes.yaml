@@ -1,0 +1,47 @@
+# Phase 4: train against the share of annotators who drew each pixel, instead
+# of against one annotator's own tracing.
+#
+# Everything else is held at the Phase 2 settings, so that the comparison
+# against local PQ 0.3756 on fold 0 measures this one change. Fifteen epochs
+# rather than forty because validation loss bottomed out at epoch 8 to 10 and
+# the shorter schedule also scored better (0.3649 against 0.3454).
+fold: 0
+image_size: 1024
+
+encoder: resnet34
+encoder_weights: imagenet
+
+epochs: 15
+batch_size: 4
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+# Zero on Windows: every worker would re-read the 48 MB annotation file.
+# Raise it to 2 on Kaggle.
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase4_votes
+
+# The one change. A frame three people annotated still yields three samples, so
+# the weighting the metric applies is untouched; all three now ask for the same
+# thing -- the share who drew each pixel -- rather than three tracings that
+# disagree by 2.6 filaments per frame.
+vote_targets: true
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
+  # Cross-entropy reads the share and is minimised at it; Dice measures overlap
+  # and would be minimised by predicting 1 everywhere the share is positive, so
+  # it reads a majority vote instead. Half rather than more: a pixel one of two
+  # annotators drew is kept, because the predictions that miss are as often too
+  # small as too large.
+  dice_majority: 0.5

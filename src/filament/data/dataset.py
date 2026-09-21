@@ -3,9 +3,23 @@
 One sample is **one annotator's view of one image**, not one image. That is the
 unit the metric scores: a frame three people annotated is scored three times
 against three different ground truths, so it appears three times here, once per
-annotator. Averaging the three into a single target would train the model on a
-consensus that the metric never rewards, and disagreement between annotators is
-large -- they differ by 2.6 filaments per frame on average.
+annotator. Collapsing the three into one sample would also change how much a
+frame weighs in the gradient, and the metric weighs it three times.
+
+Two kinds of target can sit on that sample.
+
+*Per annotator* (the default): the filaments that one person drew, as zeros and
+ones. A frame three people annotated then carries three conflicting targets,
+and the network is left to average them itself.
+
+*Vote share*: the fraction of the people who looked at that frame who drew each
+pixel -- 0, 1/3, 2/3 or 1 for a frame three people annotated. The sample count
+and the weighting are unchanged; only what the sample is asked to predict
+differs. The point is that a minority filament survives as 1/3 instead of being
+averaged into something uncalibrated, which is what lets the decision to emit it
+be made afterwards, at the threshold, where Panoptic Quality can be reasoned
+about: a filament k of n people drew is worth emitting at IoU u when
+``k * u > 0.5 * n * PQ``.
 
 The target is semantic, not per-instance: every filament that annotator drew is
 burned into one binary mask, and instances are recovered afterwards by splitting
@@ -92,8 +106,51 @@ def build_target(
     return resize(full, size, mask=True)
 
 
+def build_vote_target(
+    entries: Sequence[AnnotatorImage],
+    size: int = DEFAULT_IMAGE_SIZE,
+) -> np.ndarray:
+    """Share of the annotators of one frame who drew each pixel.
+
+    Every annotator's filaments are burned into their own mask at full
+    resolution; the masks are averaged, and the average is resized. A frame one
+    person annotated gives back exactly what :func:`build_target` would.
+
+    The resize stays nearest-neighbour, matching :func:`build_target`. Averaging
+    the pixels while downscaling would raise the best IoU the pipeline can reach
+    from 0.880 to 0.902, measured over fold 0's annotations, but it is a second
+    change and bundling it in would make the two indistinguishable in the
+    result.
+
+    Args:
+        entries: Every annotator's view of the same frame. Must not be empty.
+        size: Side length of the returned map.
+
+    Returns:
+        A ``(size, size)`` ``float32`` array in ``[0, 1]``.
+
+    Raises:
+        ValueError: If ``entries`` is empty or they are not all the same frame.
+    """
+    if not entries:
+        raise ValueError("A vote share needs at least one annotator.")
+    stems = {entry.stem for entry in entries}
+    if len(stems) != 1:
+        raise ValueError(f"Expected one frame, got {sorted(stems)}.")
+
+    first = entries[0]
+    votes = np.zeros((first.height, first.width), dtype=np.float32)
+    for entry in entries:
+        drawn = np.zeros((entry.height, entry.width), dtype=np.uint8)
+        for annotation in entry.annotations:
+            drawn |= polygon_to_mask(annotation.segmentation, entry.height, entry.width)
+        votes += drawn
+    votes /= float(len(entries))
+    return resize(votes, size, mask=True)
+
+
 class FilamentSegmentationDataset(TorchDataset):
-    """Annotator-images as (2-channel frame, binary mask) pairs.
+    """Annotator-images as (2-channel frame, target map) pairs.
 
     Args:
         dataset: Loaded annotations.
@@ -106,6 +163,11 @@ class FilamentSegmentationDataset(TorchDataset):
             filament cannot be there, so a positive label outside the disk
             would only ever be an annotation slip.
         disk_margin: Pixels of slack around the detected limb.
+        vote_targets: Ask for the share of annotators who drew each pixel
+            instead of what this sample's own annotator drew. The samples and
+            their weighting are untouched: every annotator-image is still one
+            sample, so a frame three people annotated still counts three times,
+            and all three now carry the same target.
     """
 
     def __init__(
@@ -120,11 +182,14 @@ class FilamentSegmentationDataset(TorchDataset):
         disk_margin: float = DEFAULT_MASK_MARGIN,
         clahe_clip_limit: float = CLAHE_CLIP_LIMIT,
         clahe_tile_grid: tuple[int, int] = CLAHE_TILE_GRID,
+        vote_targets: bool = False,
     ) -> None:
         selected = dataset if stems is None else dataset.subset(set(stems))
         self.entries: list[AnnotatorImage] = list(selected.annotator_images)
         if not self.entries:
             raise ValueError("No annotator-images left after filtering by stem.")
+        self.vote_targets = vote_targets
+        self._by_stem = selected.by_stem()
 
         self.images_dir = Path(images_dir)
         self.size = size
@@ -146,7 +211,10 @@ class FilamentSegmentationDataset(TorchDataset):
         entry = self.entries[index]
         frame = load_grayscale(self.frame_path(index))
         image = to_model_input(frame, self.size, self.clahe_clip_limit, self.clahe_tile_grid)
-        target = build_target(entry, self.size)
+        if self.vote_targets:
+            target = build_vote_target(self._by_stem[entry.stem], self.size)
+        else:
+            target = build_target(entry, self.size)
 
         if self.mask_outside_disk:
             disk = detect_disk(frame).scaled(self.size / frame.shape[0])

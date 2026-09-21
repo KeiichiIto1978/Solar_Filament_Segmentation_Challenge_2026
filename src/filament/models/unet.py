@@ -63,11 +63,38 @@ def build_model(config: UNetConfig | None = None) -> nn.Module:
 class DiceBceLoss(nn.Module):
     """Soft Dice plus binary cross-entropy on logits.
 
+    The two terms read the target differently, which only matters once the
+    target carries a share rather than a label.
+
+    Cross-entropy is minimised where the prediction equals the target, so a
+    pixel two of three annotators drew pulls the prediction towards 2/3. That
+    is the term that makes the output mean something a threshold can act on.
+
+    Dice measures overlap and nothing else, so it is *not* minimised there: on
+    a target of 2/3, predicting 1.0 scores 0.802 against 0.670 for predicting
+    2/3. Left on the share it would drag the output back to the two extremes
+    and undo the calibration. It therefore reads the target through a majority
+    vote -- at least half the annotators -- and keeps doing the job it is here
+    for, which is to stop a filament occupying under one percent of the frame
+    from being drowned by the background.
+
+    On a target that is already zeros and ones the majority vote changes
+    nothing, so this is the same loss the earlier phases used.
+
+    The two do pull against each other on a pixel two of three drew, where one
+    asks for 2/3 and the other for 1. The output will sit between them rather
+    than being calibrated outright; what has to survive is the order, weaker
+    where fewer people drew, and that is what the threshold needs.
+
     Args:
         dice_weight: Weight of the Dice term.
         bce_weight: Weight of the cross-entropy term.
         smooth: Added to both sides of the Dice quotient, which keeps the loss
             finite when a target is empty and the prediction is too.
+        dice_majority: Share of annotators above which Dice counts a pixel as
+            filament. Half by default, so a pixel one of two people drew is
+            kept: the predictions that miss are as often too small as too
+            large, which is no reason to shrink the target.
     """
 
     def __init__(
@@ -75,11 +102,13 @@ class DiceBceLoss(nn.Module):
         dice_weight: float = 1.0,
         bce_weight: float = 1.0,
         smooth: float = 1.0,
+        dice_majority: float = 0.5,
     ) -> None:
         super().__init__()
         self.dice_weight = dice_weight
         self.bce_weight = bce_weight
         self.smooth = smooth
+        self.dice_majority = dice_majority
         self.bce = nn.BCEWithLogitsLoss()
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -94,7 +123,7 @@ class DiceBceLoss(nn.Module):
         # Per sample, so that one frame with many filaments cannot outweigh
         # several frames with few.
         flat_probability = probability.flatten(start_dim=1)
-        flat_target = target.flatten(start_dim=1)
+        flat_target = (target >= self.dice_majority).to(probability.dtype).flatten(start_dim=1)
         intersection = (flat_probability * flat_target).sum(dim=1)
         totals = flat_probability.sum(dim=1) + flat_target.sum(dim=1)
         dice = 1.0 - ((2.0 * intersection + self.smooth) / (totals + self.smooth))

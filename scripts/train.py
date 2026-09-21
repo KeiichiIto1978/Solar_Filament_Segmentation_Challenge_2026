@@ -33,7 +33,9 @@ SMOKE_OVERRIDES = {
     "amp": False,
     "num_workers": 0,
 }
-SMOKE_OUTPUT_DIR = Path("outputs/phase1_unet_smoke")
+# Named after the configuration rather than a phase, so that a smoke run of one
+# experiment cannot overwrite the checkpoint of another.
+SMOKE_OUTPUT_ROOT = Path("outputs/smoke")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -74,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.smoke:
         config = replace(
             config,
-            output_dir=args.output_dir or SMOKE_OUTPUT_DIR,
+            output_dir=args.output_dir or SMOKE_OUTPUT_ROOT / args.config.stem,
             **SMOKE_OVERRIDES,
         )
     result = train(config, device=args.device)

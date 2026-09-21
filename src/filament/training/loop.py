@@ -91,6 +91,7 @@ def build_loaders(
         "dataset": dataset,
         "images_dir": paths.train_images,
         "size": config.image_size,
+        "vote_targets": config.vote_targets,
     }
     train_set = FilamentSegmentationDataset(
         stems=fold.train,
@@ -195,7 +196,11 @@ def train(
     model = build_model(
         UNetConfig(encoder_name=config.encoder, encoder_weights=config.encoder_weights)
     ).to(target_device)
-    criterion = DiceBceLoss(dice_weight=config.loss.dice_weight, bce_weight=config.loss.bce_weight)
+    criterion = DiceBceLoss(
+        dice_weight=config.loss.dice_weight,
+        bce_weight=config.loss.bce_weight,
+        dice_majority=config.loss.dice_majority,
+    )
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )

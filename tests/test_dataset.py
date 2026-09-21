@@ -6,11 +6,12 @@ import numpy as np
 import pytest
 import torch
 
-from filament.data.coco import load_annotations
+from filament.data.coco import Annotation, AnnotatorImage, load_annotations
 from filament.data.dataset import (
     Augmentation,
     FilamentSegmentationDataset,
     build_target,
+    build_vote_target,
 )
 from filament.data.split import load_fold
 from filament.paths import ProjectPaths
@@ -161,3 +162,108 @@ def test_the_dataset_works_through_a_dataloader(paths: ProjectPaths) -> None:
     assert batch["image"].shape == (2, 2, SIZE, SIZE)
     assert batch["target"].shape == (2, 1, SIZE, SIZE)
     assert len(batch["image_id"]) == 2
+
+
+def _annotator_image(
+    stem: str, annotator: str, polygons: list[list[float]], size: int
+) -> AnnotatorImage:
+    """One annotator's view of one frame, built by hand."""
+    image_id = f"{annotator}-{stem}"
+    return AnnotatorImage(
+        image_id=image_id,
+        annotator=annotator,
+        stem=stem,
+        file_name=f"{stem}.jpeg",
+        height=size,
+        width=size,
+        annotations=[
+            Annotation(
+                annotation_id=f"{image_id}_{index}",
+                annotator_image_id=image_id,
+                category_id=1,
+                segmentation=[polygon],
+                bbox=(0.0, 0.0, 0.0, 0.0),
+                area=0.0,
+                spine=[],
+            )
+            for index, polygon in enumerate(polygons)
+        ],
+    )
+
+
+def test_a_vote_share_counts_how_many_annotators_drew_each_pixel() -> None:
+    """Three annotators, a square all three drew and one only two drew."""
+    size = 32
+    shared = [4.0, 4.0, 12.0, 4.0, 12.0, 12.0, 4.0, 12.0]
+    extra = [20.0, 20.0, 28.0, 20.0, 28.0, 28.0, 20.0, 28.0]
+    entries = [
+        _annotator_image("frame", "a", [shared, extra], size),
+        _annotator_image("frame", "b", [shared, extra], size),
+        _annotator_image("frame", "c", [shared], size),
+    ]
+
+    votes = build_vote_target(entries, size=size)
+
+    assert votes.dtype == np.float32
+    assert votes[8, 8] == pytest.approx(1.0)
+    assert votes[24, 24] == pytest.approx(2.0 / 3.0)
+    assert votes[0, 0] == pytest.approx(0.0)
+
+
+def test_a_vote_share_of_one_annotator_is_their_own_tracing() -> None:
+    """With nobody to disagree, the share is the same zeros and ones as before."""
+    size = 32
+    square = [4.0, 4.0, 12.0, 4.0, 12.0, 12.0, 4.0, 12.0]
+    entry = _annotator_image("frame", "a", [square], size)
+
+    votes = build_vote_target([entry], size=size)
+
+    assert np.array_equal(votes, build_target(entry, size=size).astype(np.float32))
+
+
+def test_a_vote_share_needs_annotators_of_one_frame() -> None:
+    size = 16
+    square = [2.0, 2.0, 6.0, 2.0, 6.0, 6.0, 2.0, 6.0]
+
+    with pytest.raises(ValueError, match="at least one annotator"):
+        build_vote_target([], size=size)
+    with pytest.raises(ValueError, match="Expected one frame"):
+        build_vote_target(
+            [
+                _annotator_image("one", "a", [square], size),
+                _annotator_image("two", "a", [square], size),
+            ],
+            size=size,
+        )
+
+
+@pytest.mark.dataset
+def test_vote_targets_keep_one_sample_per_annotator(paths: ProjectPaths) -> None:
+    """The weighting the metric applies must survive: three annotators, three
+    samples. Only what they ask for changes -- now all three agree."""
+    dataset = load_annotations(paths.train_annotations)
+    stem = next(s for s, entries in dataset.by_stem().items() if len(entries) == 3)
+
+    subset = FilamentSegmentationDataset(
+        dataset, paths.train_images, stems=[stem], size=SIZE, vote_targets=True
+    )
+
+    assert len(subset) == 3
+    targets = [subset[index]["target"] for index in range(3)]
+    assert torch.equal(targets[0], targets[1])
+    assert torch.equal(targets[1], targets[2])
+    # A third, two thirds and one are all a frame three people saw can hold.
+    values = sorted(torch.unique(targets[0]).tolist())
+    assert values == pytest.approx([0.0, 1 / 3, 2 / 3, 1.0], abs=1e-6)
+
+
+@pytest.mark.dataset
+def test_vote_targets_change_nothing_on_a_single_annotator_frame(paths: ProjectPaths) -> None:
+    dataset = load_annotations(paths.train_annotations)
+    stem = dataset.single_annotator_stems()[0]
+
+    common = {"dataset": dataset, "images_dir": paths.train_images, "stems": [stem], "size": SIZE}
+    per_annotator = FilamentSegmentationDataset(**common)
+    shares = FilamentSegmentationDataset(**common, vote_targets=True)
+
+    assert torch.equal(per_annotator[0]["target"], shares[0]["target"])
