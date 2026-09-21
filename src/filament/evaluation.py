@@ -48,6 +48,7 @@ from filament.postprocess.instances import (
     fusion_and_splitting,
     instances_to_rows,
 )
+from filament.postprocess.join import DEFAULT_MAX_ANGLE, DEFAULT_MAX_OFFSET
 from filament.submit.rle import FULL_HEIGHT, SUBMISSION_COLUMNS, masks_to_gt_df
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,9 @@ def predict_frame(
     device: torch.device | str = "cpu",
     mask_disk: bool = True,
     output_size: int = FULL_HEIGHT,
+    join_gap: float = 0.0,
+    join_angle: float = DEFAULT_MAX_ANGLE,
+    join_offset: float = DEFAULT_MAX_OFFSET,
 ) -> list[Instance]:
     """Predict the filaments of one frame, as non-overlapping masks.
 
@@ -153,6 +157,9 @@ def predict_frame(
         disk=disk,
         disk_margin=DEFAULT_MASK_MARGIN * scale,
         output_size=output_size,
+        join_gap=join_gap,
+        join_angle=join_angle,
+        join_offset=join_offset,
     )
 
 
