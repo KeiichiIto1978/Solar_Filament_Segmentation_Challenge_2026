@@ -15,6 +15,8 @@ from filament.postprocess.search import (
     SweepResult,
     grid,
     load_maps,
+    predict_from_maps,
+    save_map,
     sweep,
 )
 from filament.submit.rle import SUBMISSION_COLUMNS, mask_to_rle
@@ -219,3 +221,67 @@ def test_load_maps_can_be_restricted_to_some_stems(tmp_path: Path) -> None:
 def test_load_maps_reports_an_empty_directory(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="No probability maps"):
         load_maps(tmp_path)
+
+
+def test_a_map_survives_the_round_trip_through_a_byte(tmp_path: Path) -> None:
+    """A byte per pixel resolves to 1/255, far finer than any threshold in use."""
+    rng = np.random.default_rng(0)
+    probability = rng.random((64, 64)).astype(np.float32)
+
+    save_map(probability, tmp_path / "frame.npy")
+    restored = load_maps(tmp_path)["frame"]
+
+    assert restored.dtype == np.float32
+    assert np.abs(restored - probability).max() <= 1.0 / 255.0
+
+
+def test_the_stored_map_is_a_byte_per_pixel(tmp_path: Path) -> None:
+    save_map(np.zeros((128, 128), dtype=np.float32), tmp_path / "frame.npy")
+
+    stored = np.load(tmp_path / "frame.npy")
+
+    assert stored.dtype == np.uint8
+    # Header aside, one byte per pixel rather than the two float16 costs.
+    assert (tmp_path / "frame.npy").stat().st_size < 128 * 128 * 1.1
+
+
+def test_float_maps_from_the_earlier_phases_still_load(tmp_path: Path) -> None:
+    probability = np.linspace(0.0, 1.0, 64, dtype=np.float32).reshape(8, 8)
+    np.save(tmp_path / "frame.npy", probability.astype(np.float16))
+
+    restored = load_maps(tmp_path)["frame"]
+
+    assert restored.dtype == np.float32
+    assert np.abs(restored - probability).max() < 1e-3
+
+
+def test_saving_rejects_anything_that_is_not_a_map(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="2-D probability map"):
+        save_map(np.zeros((2, 8, 8), dtype=np.float32), tmp_path / "frame.npy")
+
+
+def test_one_setting_can_be_applied_outside_a_sweep() -> None:
+    """The setting a sweep settles on has to reach the test frames, which have
+    no ground truth to sweep against."""
+    maps = {STEM: _probability_map((10, 10, 40, 20))}
+    setting = Setting({"threshold": 0.5, "min_area": 10})
+
+    frame = predict_from_maps(maps, setting, output_size=OUTPUT_SIZE)
+
+    assert list(frame.columns) == list(SUBMISSION_COLUMNS)
+    assert len(frame) == 1
+    assert frame["filament_id"].iloc[0] == f"{STEM}_1"
+
+
+def test_a_sweep_point_and_a_direct_call_agree() -> None:
+    maps = {STEM: _probability_map((10, 10, 40, 20), (60, 60, 90, 70))}
+    setting = Setting({"threshold": 0.5, "min_area": 10})
+    gt_df = pd.DataFrame(
+        [(f"{ANNOTATOR_IMAGE}_1", mask_to_rle(np.zeros((OUTPUT_SIZE, OUTPUT_SIZE), dtype=bool)))],
+        columns=list(SUBMISSION_COLUMNS),
+    )
+
+    direct = predict_from_maps(maps, setting, output_size=OUTPUT_SIZE)
+    swept = sweep(maps, gt_df, [setting], output_size=OUTPUT_SIZE)
+
+    assert swept.points[0].predictions == len(direct)

@@ -189,18 +189,11 @@ def sweep(
     Returns:
         Every point, with its PQ breakdown.
     """
-    builder = build or _default_builder
     points: list[SweepPoint] = []
 
     for setting in settings:
         started = time.perf_counter()
-        rows: list[tuple[str, str]] = []
-        for stem, probability in maps.items():
-            disk = None if disks is None else disks.get(stem)
-            instances = builder(probability, disk, setting.values | {"output_size": output_size})
-            rows.extend(instances_to_rows(stem, instances))
-
-        pred_df = pd.DataFrame(rows, columns=list(SUBMISSION_COLUMNS))
+        pred_df = predict_from_maps(maps, setting, disks, output_size, build)
         result = compute_pq(gt_df, pred_df)
         point = SweepPoint(
             setting=setting,
@@ -212,6 +205,39 @@ def sweep(
         logger.info("%s -> %s", setting, result)
 
     return SweepResult(points=points)
+
+
+def predict_from_maps(
+    maps: ProbabilityMaps,
+    setting: Setting,
+    disks: Mapping[str, Disk] | None = None,
+    output_size: int = FULL_HEIGHT,
+    build: InstanceBuilder | None = None,
+) -> pd.DataFrame:
+    """Turn probability maps into submission rows under one setting.
+
+    The same path a sweep point takes, exposed on its own so that the setting
+    a sweep settles on can be applied to another set of maps -- the test
+    frames -- without a second copy of the chain.
+
+    Args:
+        maps: Probability map per image stem, at the working resolution.
+        setting: The post-processing parameters to apply.
+        disks: Solar disk per stem, in the maps' coordinates. Omit when the
+            maps are already masked.
+        output_size: Side length the masks are scaled up to.
+        build: Override how instances are produced from a map.
+
+    Returns:
+        A submission-shaped frame: ``filament_id`` and ``segmentation_rle``.
+    """
+    builder = build or _default_builder
+    rows: list[tuple[str, str]] = []
+    for stem, probability in maps.items():
+        disk = None if disks is None else disks.get(stem)
+        instances = builder(probability, disk, setting.values | {"output_size": output_size})
+        rows.extend(instances_to_rows(stem, instances))
+    return pd.DataFrame(rows, columns=list(SUBMISSION_COLUMNS))
 
 
 def _default_builder(
@@ -230,12 +256,32 @@ def _default_builder(
     )
 
 
+def save_map(probability: np.ndarray, path: Path | str) -> Path:
+    """Write one probability map as ``uint8``, and return where it landed.
+
+    A byte per pixel resolves the probability to 1/255, which is far finer
+    than anything downstream distinguishes: every threshold from 0.3 to 0.7
+    scored within 0.001 of the others on fold 0. It halves what float16 costs,
+    and a map that is mostly zeros compresses well on top of that, which is
+    what makes a fold's worth small enough to carry off the machine that
+    produced it.
+    """
+    if probability.ndim != 2:
+        raise ValueError(f"Expected a 2-D probability map, got shape {probability.shape}.")
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    quantised = np.clip(np.rint(np.asarray(probability, dtype=np.float32) * 255.0), 0, 255)
+    np.save(destination, quantised.astype(np.uint8))
+    return destination.with_suffix(".npy")
+
+
 def load_maps(directory: Path | str, stems: Iterable[str] | None = None) -> dict[str, np.ndarray]:
     """Read probability maps written as ``<stem>.npy``.
 
-    Stored as float16 to keep a fold's worth of maps to a few hundred
-    megabytes; they are widened on load because the comparisons downstream are
-    done in float32.
+    Both storage formats this project has used are accepted: ``uint8``, where
+    a byte holds the probability in 1/255 steps, and the float16 the earlier
+    phases wrote. Either way the caller gets float32 in ``[0, 1]``, because the
+    comparisons downstream are done in float32.
     """
     folder = Path(directory)
     wanted = None if stems is None else set(stems)
@@ -243,7 +289,9 @@ def load_maps(directory: Path | str, stems: Iterable[str] | None = None) -> dict
     for path in sorted(folder.glob("*.npy")):
         if wanted is not None and path.stem not in wanted:
             continue
-        maps[path.stem] = np.load(path).astype(np.float32)
+        stored = np.load(path)
+        scale = 255.0 if stored.dtype == np.uint8 else 1.0
+        maps[path.stem] = stored.astype(np.float32) / scale
     if not maps:
         raise FileNotFoundError(f"No probability maps found in {folder}.")
     return maps

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from filament.postprocess.instances import (
     instances_to_rows,
 )
 from filament.postprocess.join import DEFAULT_MAX_ANGLE, DEFAULT_MAX_OFFSET
+from filament.postprocess.search import save_map
 from filament.submit.rle import FULL_HEIGHT, SUBMISSION_COLUMNS, masks_to_gt_df
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,53 @@ def predict_frame(
         join_angle=join_angle,
         join_offset=join_offset,
     )
+
+
+def write_probability_maps(
+    model: nn.Module,
+    frame_paths: Iterable[Path | str],
+    out_dir: Path | str,
+    size: int = DEFAULT_IMAGE_SIZE,
+    device: torch.device | str = "cpu",
+    log_every: int = 40,
+) -> list[Path]:
+    """Run the model over frames and store each probability map as ``uint8``.
+
+    Everything after the forward pass -- thresholding, joining fragments,
+    filtering by area, scoring -- reads only these maps, so writing them once
+    is what stops the rest of the work needing a GPU. The files are named after
+    the frame, which is the key the sweep and the submission both index by.
+
+    Args:
+        model: Trained network, in evaluation mode.
+        frame_paths: Frames to run.
+        out_dir: Directory to write into. Created if missing.
+        size: Resolution the model runs at.
+        device: Device to run on.
+        log_every: Report progress every this many frames.
+
+    Returns:
+        The files written, in the order the frames were given.
+    """
+    destination = Path(out_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+    started = time.perf_counter()
+    for position, frame_path in enumerate(frame_paths, start=1):
+        path = Path(frame_path)
+        probability = predict_probability(model, load_grayscale(path), size, device)
+        written.append(save_map(probability, destination / f"{path.stem}.npy"))
+        if log_every and position % log_every == 0:
+            logger.info("%d frames written.", position)
+
+    logger.info(
+        "Wrote %d probability maps to %s in %.1fs.",
+        len(written),
+        destination,
+        time.perf_counter() - started,
+    )
+    return written
 
 
 def shrink(mask: np.ndarray, size: int = COUNT_SIZE) -> np.ndarray:
