@@ -14,6 +14,11 @@ from typing import Any
 
 import yaml
 
+from filament.data.crops import (
+    DEFAULT_CONTEXT,
+    DEFAULT_CROP_SIZE,
+    DEFAULT_SEED_PADDING,
+)
 from filament.data.dataset import DEFAULT_IMAGE_SIZE
 from filament.data.split import DEFAULT_SEED
 from filament.models.cldice import DEFAULT_ITERATIONS
@@ -41,6 +46,19 @@ class LossConfig:
 
 
 @dataclass(frozen=True)
+class CropConfig:
+    """How a filament is cut out, when training on crops rather than frames."""
+
+    size: int = DEFAULT_CROP_SIZE
+    context: float = DEFAULT_CONTEXT
+    seed_padding: float = DEFAULT_SEED_PADDING
+    # Zero keeps the crop exactly on its box, which is what an upper bound
+    # wants. A system fed by a detector needs this non-zero, so that the seed
+    # it trains on is as loose as the one it will be handed.
+    jitter: float = 0.0
+
+
+@dataclass(frozen=True)
 class TrainConfig:
     """Everything one training run needs.
 
@@ -62,6 +80,10 @@ class TrainConfig:
         max_val_batches: Same, for validation.
         vote_targets: Train against the share of annotators who drew each
             pixel rather than against one annotator's own tracing.
+        crops: Train on one filament at a time, cut out of the frame at full
+            resolution, instead of on whole frames shrunk to fit. Changes the
+            input to three channels: the crop, its contrast-equalised version,
+            and the box saying which filament is being asked for.
     """
 
     fold: int = 0
@@ -79,6 +101,7 @@ class TrainConfig:
     max_train_batches: int | None = None
     max_val_batches: int | None = None
     vote_targets: bool = False
+    crops: CropConfig | None = None
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     loss: LossConfig = field(default_factory=LossConfig)
 
@@ -116,6 +139,8 @@ class TrainConfig:
             values["augmentation"] = AugmentationConfig(**values["augmentation"])
         if "loss" in values:
             values["loss"] = LossConfig(**values["loss"])
+        if values.get("crops") is not None:
+            values["crops"] = CropConfig(**values["crops"])
         if "output_dir" in values:
             values["output_dir"] = Path(values["output_dir"])
         return cls(**values)

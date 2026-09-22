@@ -23,11 +23,14 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+from torch.utils.data import Dataset as TorchDataset
 
 from filament.data.coco import Dataset, load_annotations
+from filament.data.crops import INPUT_CHANNELS as CROP_CHANNELS
+from filament.data.crops import FilamentCropDataset
 from filament.data.dataset import Augmentation, FilamentSegmentationDataset
 from filament.data.split import load_fold
-from filament.models.unet import DiceBceLoss, UNetConfig, build_model
+from filament.models.unet import INPUT_CHANNELS, DiceBceLoss, UNetConfig, build_model
 from filament.paths import ProjectPaths, load_paths
 from filament.training.config import TrainConfig
 
@@ -85,8 +88,36 @@ def build_loaders(
     dataset: Dataset,
     paths: ProjectPaths,
 ) -> tuple[DataLoader, DataLoader]:
-    """Training and validation loaders for one fold of the frozen split."""
+    """Training and validation loaders for one fold of the frozen split.
+
+    Two shapes of sample, chosen by whether ``config.crops`` is set: whole
+    frames shrunk to fit, or one filament at a time cut out at full
+    resolution. The rest of the loop does not care which.
+    """
     fold = load_fold(config.fold, paths.splits_dir)
+    if config.crops is not None:
+        crop = config.crops
+        shared = {
+            "dataset": dataset,
+            "images_dir": paths.train_images,
+            "size": crop.size,
+            "context": crop.context,
+            "seed_padding": crop.seed_padding,
+        }
+        train_set: TorchDataset = FilamentCropDataset(
+            stems=fold.train, jitter=crop.jitter, flips=True, seed=config.seed, **shared
+        )
+        val_set: TorchDataset = FilamentCropDataset(
+            stems=fold.val, jitter=0.0, flips=False, **shared
+        )
+        logger.info(
+            "Fold %d: %d training and %d validation crops.",
+            config.fold,
+            len(train_set),
+            len(val_set),
+        )
+        return _to_loaders(config, train_set, val_set)
+
     common = {
         "dataset": dataset,
         "images_dir": paths.train_images,
@@ -106,6 +137,13 @@ def build_loaders(
         len(train_set),
         len(val_set),
     )
+    return _to_loaders(config, train_set, val_set)
+
+
+def _to_loaders(
+    config: TrainConfig, train_set: TorchDataset, val_set: TorchDataset
+) -> tuple[DataLoader, DataLoader]:
+    """Wrap the two datasets in loaders, however they were built."""
     return (
         DataLoader(
             train_set,
@@ -194,7 +232,11 @@ def train(
     train_loader, val_loader = build_loaders(config, dataset, resolved_paths)
 
     model = build_model(
-        UNetConfig(encoder_name=config.encoder, encoder_weights=config.encoder_weights)
+        UNetConfig(
+            encoder_name=config.encoder,
+            encoder_weights=config.encoder_weights,
+            in_channels=CROP_CHANNELS if config.crops is not None else INPUT_CHANNELS,
+        )
     ).to(target_device)
     criterion = DiceBceLoss(
         dice_weight=config.loss.dice_weight,
@@ -281,6 +323,10 @@ def load_checkpoint(
             encoder_name=str(stored["encoder"]),
             # Pretrained weights are irrelevant here: the checkpoint replaces them.
             encoder_weights=None,
+            # A crop model reads a third channel, the box saying which filament
+            # is being asked for. The configuration stored beside the weights is
+            # what says which kind this is.
+            in_channels=CROP_CHANNELS if stored.get("crops") else INPUT_CHANNELS,
         )
     )
     model.load_state_dict(payload["model"])

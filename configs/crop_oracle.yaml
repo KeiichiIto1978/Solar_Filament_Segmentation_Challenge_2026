@@ -1,0 +1,52 @@
+# Is a crop model worth building a detector for?
+#
+# One filament per sample, cut out of the frame at full resolution around its
+# annotated box, and evaluated against that same box. Perfect boxes are not
+# something a detector delivers, so what this measures is an upper bound: how
+# good the masks could be if finding the filaments were free.
+#
+# The number to beat is the mask quality the whole-disk model already reaches,
+# SQ 0.6555 on fold 0. If this run lands near it, the two-stage design is not
+# worth its cost and the finding is had for one training run instead of a
+# fortnight of building.
+fold: 0
+
+# Unused when crops are on, but recorded so that the configuration beside the
+# checkpoint stays readable.
+image_size: 1024
+
+encoder: resnet34
+encoder_weights: imagenet
+
+epochs: 12
+# Crops are a quarter of the pixels of a 1024 frame, so more fit at once.
+batch_size: 16
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+# Zero on Windows: every worker would re-read the 48 MB annotation file.
+# Raise it to 2 on Kaggle.
+num_workers: 0
+amp: true
+
+output_dir: outputs/crop_oracle
+
+crops:
+  # 512 for a box 250 pixels across at the median: this magnifies rather than
+  # shrinks, which is the whole point.
+  size: 512
+  # The crop covers this multiple of the box's longer side, leaving room for a
+  # box that sits slightly off and showing what surrounds the filament.
+  context: 1.5
+  # The seed is the box grown by this much before being filled.
+  seed_padding: 0.4
+  # Zero: the crops sit exactly on their boxes. That is what an upper bound
+  # wants. A system fed by a real detector needs this at about 0.15, so that
+  # the seed it trains on is as loose as the one it will be handed.
+  jitter: 0.0
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
