@@ -10,13 +10,17 @@ The encoder expects three channels and we feed it two (the frame and its CLAHE
 version). The library handles that by summing the pretrained weights of the
 missing channel into the remaining ones, so the pretrained filters stay useful.
 
-The loss is Dice plus binary cross-entropy. Cross-entropy alone is dominated by
-the background: filaments cover well under one percent of a frame, so a model
-that predicts nothing at all already scores a low loss. Dice measures overlap
-and is indifferent to how much background there is, which is what makes it pull
-the model towards actually marking something; cross-entropy is kept alongside
-it because Dice alone gives a weak gradient early on, when the prediction and
-the target barely overlap.
+The loss is Dice plus binary cross-entropy, with an optional third term.
+Cross-entropy alone is dominated by the background: filaments cover well under
+one percent of a frame, so a model that predicts nothing at all already scores
+a low loss. Dice measures overlap and is indifferent to how much background
+there is, which is what makes it pull the model towards actually marking
+something; cross-entropy is kept alongside it because Dice alone gives a weak
+gradient early on, when the prediction and the target barely overlap.
+
+Neither notices a filament predicted as two pieces, which is the single
+failure the score keeps charging for. :mod:`filament.models.cldice` supplies a
+term that does; it is off by default, so every earlier number still stands.
 """
 
 from __future__ import annotations
@@ -26,6 +30,8 @@ from dataclasses import dataclass
 import segmentation_models_pytorch as smp
 import torch
 from torch import nn
+
+from filament.models.cldice import DEFAULT_ITERATIONS, SoftClDice
 
 DEFAULT_ENCODER = "resnet34"
 DEFAULT_ENCODER_WEIGHTS = "imagenet"
@@ -95,6 +101,11 @@ class DiceBceLoss(nn.Module):
             filament. Half by default, so a pixel one of two people drew is
             kept: the predictions that miss are as often too small as too
             large, which is no reason to shrink the target.
+        cldice_weight: Weight of the centreline term, which is what charges for
+            a filament predicted as two pieces. Zero by default, leaving the
+            loss exactly as the earlier phases had it.
+        cldice_iterations: Rounds of peeling in the skeletonisation. Has to
+            reach the radius of the thickest filament.
     """
 
     def __init__(
@@ -103,13 +114,17 @@ class DiceBceLoss(nn.Module):
         bce_weight: float = 1.0,
         smooth: float = 1.0,
         dice_majority: float = 0.5,
+        cldice_weight: float = 0.0,
+        cldice_iterations: int = DEFAULT_ITERATIONS,
     ) -> None:
         super().__init__()
         self.dice_weight = dice_weight
         self.bce_weight = bce_weight
         self.smooth = smooth
         self.dice_majority = dice_majority
+        self.cldice_weight = cldice_weight
         self.bce = nn.BCEWithLogitsLoss()
+        self.cldice = SoftClDice(iterations=cldice_iterations, smooth=smooth)
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Loss of a ``(N, 1, H, W)`` batch of logits against its target."""
@@ -128,4 +143,11 @@ class DiceBceLoss(nn.Module):
         totals = flat_probability.sum(dim=1) + flat_target.sum(dim=1)
         dice = 1.0 - ((2.0 * intersection + self.smooth) / (totals + self.smooth))
 
-        return self.dice_weight * dice.mean() + self.bce_weight * self.bce(logits, target)
+        loss = self.dice_weight * dice.mean() + self.bce_weight * self.bce(logits, target)
+        if self.cldice_weight:
+            # The centreline term reads the same majority vote as Dice, so that
+            # a share of annotators does not blur the skeleton it is built from.
+            loss = loss + self.cldice_weight * self.cldice(
+                probability, flat_target.view_as(probability)
+            )
+        return loss

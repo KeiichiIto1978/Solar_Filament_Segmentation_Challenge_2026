@@ -16,6 +16,7 @@ import yaml
 
 from filament.data.dataset import DEFAULT_IMAGE_SIZE
 from filament.data.split import DEFAULT_SEED
+from filament.models.cldice import DEFAULT_ITERATIONS
 from filament.models.unet import DEFAULT_ENCODER, DEFAULT_ENCODER_WEIGHTS
 
 
@@ -35,6 +36,8 @@ class LossConfig:
     dice_weight: float = 1.0
     bce_weight: float = 1.0
     dice_majority: float = 0.5
+    cldice_weight: float = 0.0
+    cldice_iterations: int = DEFAULT_ITERATIONS
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,53 @@
+# Phase 5: add a centreline term to the loss, so that breaking one filament
+# into two costs something.
+#
+# Everything else is held at the Phase 2 settings, so the comparison against
+# local PQ 0.3756 on fold 0 measures this one change. Fifteen epochs because
+# validation loss bottomed out at epoch 8 to 10 and the shorter schedule also
+# scored better (0.3649 against 0.3454).
+fold: 0
+image_size: 1024
+
+encoder: resnet34
+encoder_weights: imagenet
+
+epochs: 15
+batch_size: 4
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+# Zero on Windows: every worker would re-read the 48 MB annotation file.
+# Raise it to 2 on Kaggle.
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase5_cldice
+
+# Targets stay one tracing per annotator. Asking for the share of annotators
+# instead was measured and rejected: local PQ fell from 0.3756 to 0.3642.
+vote_targets: false
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  # The paper combines the two overlap terms as (1 - a) * Dice + a * clDice
+  # with a at most 0.5, and reports that any a above zero improves topology on
+  # all five of its datasets. Splitting the existing Dice weight rather than
+  # adding on top keeps the total weight on overlap unchanged -- the previous
+  # phase changed the balance of the loss and the model responded by painting
+  # more, which is a lesson worth not repeating.
+  dice_weight: 0.5
+  cldice_weight: 0.5
+  bce_weight: 1.0
+
+  # Peeling has to reach the middle of the thickest filament or a break in it
+  # is invisible: a solid shape survives being opened, so the skeleton stays
+  # empty until erosion wears it down to a line, and an empty skeleton scores
+  # a perfect clDice. Measured on fold 0's training split at 1024 pixels, a
+  # filament's radius is 4.1 at the median and 20.6 at the most.
+  cldice_iterations: 25

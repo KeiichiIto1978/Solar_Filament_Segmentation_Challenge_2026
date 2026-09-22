@@ -200,6 +200,8 @@ def train(
         dice_weight=config.loss.dice_weight,
         bce_weight=config.loss.bce_weight,
         dice_majority=config.loss.dice_majority,
+        cldice_weight=config.loss.cldice_weight,
+        cldice_iterations=config.loss.cldice_iterations,
     )
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
