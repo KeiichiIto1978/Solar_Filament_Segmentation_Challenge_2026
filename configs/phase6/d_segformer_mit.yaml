@@ -24,7 +24,16 @@ encoder: mit_b2
 encoder_weights: imagenet
 
 epochs: 20
-batch_size: 4
+# Two rather than the four the other three runs use. A transformer compares
+# every patch with every other, so its memory grows faster than fourfold as the
+# side doubles, and at 1024 a batch of four does not fit a T4 -- this run was
+# lost to that before it started. Halving it is the smallest change that keeps
+# the resolution, which is the property being compared. It does leave this run
+# on a different footing from the other three, and that has to be said whenever
+# its number is quoted. Batch normalisation is not the obstacle it would be for
+# a convolutional decoder: the transformer normalises each sample on its own,
+# and a batch of one runs here as well as a batch of two.
+batch_size: 2
 learning_rate: 3.0e-4
 weight_decay: 1.0e-4
 
