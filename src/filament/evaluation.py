@@ -33,7 +33,7 @@ from torch import nn
 
 from filament.data.coco import AnnotatorImage, Dataset
 from filament.data.dataset import DEFAULT_IMAGE_SIZE
-from filament.data.disk import DEFAULT_MASK_MARGIN, detect_disk
+from filament.data.disk import detect_disk
 from filament.data.image import (
     CLAHE_CLIP_LIMIT,
     CLAHE_TILE_GRID,
@@ -161,7 +161,6 @@ def predict_frame(
         threshold=threshold,
         min_area=min_area,
         disk=disk,
-        disk_margin=DEFAULT_MASK_MARGIN * scale,
         output_size=output_size,
         join_gap=join_gap,
         join_angle=join_angle,
