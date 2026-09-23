@@ -7,10 +7,15 @@
 #
 # Everything outside the two lines below is held at the values Phase 1 settled
 # on, so that the difference between these four runs is the network and
-# nothing else. Twenty epochs rather than forty: Phase 1 measured PQ 0.3661 at
-# ten epochs, 0.3793 at twenty and 0.3794 at twenty-nine, so the schedule is
-# cut where it stopped paying. The cosine schedule is set from the epoch count,
-# so each run still completes a full decay rather than being stopped early.
+# nothing else.
+#
+# Twenty epochs. The checkpoint behind the incumbent PQ 0.3756 was trained for
+# fifteen, and a separate forty-epoch run found its lowest validation loss at
+# epoch eight to ten and never beat it afterwards -- training loss kept falling
+# from 0.315 to 0.193 while validation drifted from 0.366 to 0.379. Twenty
+# gives an unfamiliar network slightly more room than the incumbent had without
+# paying for a length already shown to be wasted. The cosine decay is set from
+# the epoch count, so each run completes its own rather than being cut short.
 fold: 0
 image_size: 1024
 
