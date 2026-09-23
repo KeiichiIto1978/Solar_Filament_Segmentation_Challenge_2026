@@ -1,10 +1,21 @@
-"""The U-Net of the semantic baseline, and the loss it is trained with.
+"""The segmentation network, and the loss it is trained with.
 
 The architecture comes from ``segmentation_models_pytorch`` rather than being
 written out here. Two reasons: the public notebooks for this competition use
 the same library, which makes their numbers comparable with ours, and an
 encoder pretrained on ImageNet is worth more than a hand-written one on 707
 frames.
+
+Which architecture is a setting rather than a decision taken in code. The
+baseline is a U-Net because that is where the project started, not because
+anything measured said so, and the same library exposes a dozen alternatives
+behind one constructor -- so comparing them costs a configuration file each.
+The ones worth comparing are those that answer how this data fails: filaments
+are thin, they cover 0.35% of a frame, and the ones that vanish from the
+probability map entirely are the small ones. An encoder-decoder that halves
+its resolution five times has the most to lose there, which is a reason to try
+decoders that pool wide context and encoders that see globally from the first
+stage -- not merely that they are newer.
 
 The encoder expects three channels and we feed it two (the frame and its CLAHE
 version). The library handles that by summing the pretrained weights of the
@@ -33,15 +44,17 @@ from torch import nn
 
 from filament.models.cldice import DEFAULT_ITERATIONS, SoftClDice
 
+DEFAULT_ARCHITECTURE = "Unet"
 DEFAULT_ENCODER = "resnet34"
 DEFAULT_ENCODER_WEIGHTS = "imagenet"
 INPUT_CHANNELS = 2
 
 
 @dataclass(frozen=True)
-class UNetConfig:
-    """How to build the baseline network."""
+class ModelConfig:
+    """How to build the network: which decoder, which encoder, how many inputs."""
 
+    architecture: str = DEFAULT_ARCHITECTURE
     encoder_name: str = DEFAULT_ENCODER
     encoder_weights: str | None = DEFAULT_ENCODER_WEIGHTS
     in_channels: int = INPUT_CHANNELS
@@ -52,8 +65,21 @@ class UNetConfig:
 
         Returns a model whose output is one channel of raw logits, at the same
         resolution as the input.
+
+        Raises:
+            ValueError: If the architecture is not one the library provides. A
+                typo would otherwise surface as an ``AttributeError`` deep in
+                the training run, after the data has already been loaded.
         """
-        return smp.Unet(
+        # Looked up case-insensitively through the library's own registry, so
+        # that a configuration may name it the way the class is spelled.
+        builder = smp.MODEL_ARCHITECTURES_MAPPING.get(self.architecture.lower())
+        if builder is None:
+            available = ", ".join(
+                sorted(item.__name__ for item in smp.MODEL_ARCHITECTURES_MAPPING.values())
+            )
+            raise ValueError(f"Unknown architecture {self.architecture!r}. Available: {available}.")
+        return builder(
             encoder_name=self.encoder_name,
             encoder_weights=self.encoder_weights,
             in_channels=self.in_channels,
@@ -61,9 +87,9 @@ class UNetConfig:
         )
 
 
-def build_model(config: UNetConfig | None = None) -> nn.Module:
-    """Build the baseline network from ``config``, or from its defaults."""
-    return (config or UNetConfig()).build()
+def build_model(config: ModelConfig | None = None) -> nn.Module:
+    """Build the network from ``config``, or from its defaults."""
+    return (config or ModelConfig()).build()
 
 
 class DiceBceLoss(nn.Module):

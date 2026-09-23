@@ -144,6 +144,10 @@ def predict_frame(
         device: Device to run on.
         mask_disk: Discard whatever falls outside the solar disk.
         output_size: Side length of the returned masks.
+        join_gap: Rejoin regions up to this far apart, in pixels of the map.
+            Zero switches the rejoining off.
+        join_angle: Largest angle between two regions' long axes, in degrees.
+        join_offset: How far one region may sit off the other's axis.
     """
     frame = load_grayscale(frame_path)
     probability = predict_probability(model, frame, size, device)
@@ -241,6 +245,9 @@ def evaluate(
     mask_disk: bool = True,
     gt_df: pd.DataFrame | None = None,
     count_fusion: bool = True,
+    join_gap: float = 0.0,
+    join_angle: float = DEFAULT_MAX_ANGLE,
+    join_offset: float = DEFAULT_MAX_OFFSET,
 ) -> tuple[EvaluationResult, pd.DataFrame]:
     """Predict every frame of ``stems`` and score it against the annotations.
 
@@ -258,6 +265,13 @@ def evaluate(
             as long as the inference and never changes, so a tuning sweep
             should build it once and pass it in.
         count_fusion: Count fused and split filaments. Costs a few seconds.
+        join_gap: Rejoin regions up to this far apart, in pixels of the map.
+            Zero switches the rejoining off, which is the plain behaviour and
+            *not* the configuration Phase 3 settled on. Two runs are only
+            comparable when they are scored through the same chain, so anything
+            being compared with an earlier number has to name it here.
+        join_angle: Largest angle between two regions' long axes, in degrees.
+        join_offset: How far one region may sit off the other's axis.
 
     Returns:
         The result, and the predictions as a submission-shaped DataFrame.
@@ -277,6 +291,9 @@ def evaluate(
             min_area=min_area,
             device=device,
             mask_disk=mask_disk,
+            join_gap=join_gap,
+            join_angle=join_angle,
+            join_offset=join_offset,
         )
         rows.extend(instances_to_rows(stem, instances))
         if count_fusion:

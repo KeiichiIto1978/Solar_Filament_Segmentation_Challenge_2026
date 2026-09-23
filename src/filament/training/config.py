@@ -22,7 +22,11 @@ from filament.data.crops import (
 from filament.data.dataset import DEFAULT_IMAGE_SIZE
 from filament.data.split import DEFAULT_SEED
 from filament.models.cldice import DEFAULT_ITERATIONS
-from filament.models.unet import DEFAULT_ENCODER, DEFAULT_ENCODER_WEIGHTS
+from filament.models.segmentation import (
+    DEFAULT_ARCHITECTURE,
+    DEFAULT_ENCODER,
+    DEFAULT_ENCODER_WEIGHTS,
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,8 @@ class TrainConfig:
     Attributes:
         fold: Which fold of the frozen split to validate on.
         image_size: Side length frames are resized to.
+        architecture: Decoder family, named as segmentation_models_pytorch
+            spells the class (``Unet``, ``UPerNet``, ``Segformer``, ...).
         encoder: Encoder name passed to segmentation_models_pytorch.
         encoder_weights: Pretrained weights, or ``None`` for random init.
         epochs: Number of passes over the training split.
@@ -88,6 +94,7 @@ class TrainConfig:
 
     fold: int = 0
     image_size: int = DEFAULT_IMAGE_SIZE
+    architecture: str = DEFAULT_ARCHITECTURE
     encoder: str = DEFAULT_ENCODER
     encoder_weights: str | None = DEFAULT_ENCODER_WEIGHTS
     epochs: int = 40

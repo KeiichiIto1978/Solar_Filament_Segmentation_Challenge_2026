@@ -30,7 +30,13 @@ from filament.data.crops import INPUT_CHANNELS as CROP_CHANNELS
 from filament.data.crops import FilamentCropDataset
 from filament.data.dataset import Augmentation, FilamentSegmentationDataset
 from filament.data.split import load_fold
-from filament.models.unet import INPUT_CHANNELS, DiceBceLoss, UNetConfig, build_model
+from filament.models.segmentation import (
+    DEFAULT_ARCHITECTURE,
+    INPUT_CHANNELS,
+    DiceBceLoss,
+    ModelConfig,
+    build_model,
+)
 from filament.paths import ProjectPaths, load_paths
 from filament.training.config import TrainConfig
 
@@ -232,7 +238,8 @@ def train(
     train_loader, val_loader = build_loaders(config, dataset, resolved_paths)
 
     model = build_model(
-        UNetConfig(
+        ModelConfig(
+            architecture=config.architecture,
             encoder_name=config.encoder,
             encoder_weights=config.encoder_weights,
             in_channels=CROP_CHANNELS if config.crops is not None else INPUT_CHANNELS,
@@ -319,7 +326,10 @@ def load_checkpoint(
     payload = torch.load(Path(path), map_location=target_device, weights_only=False)
     stored = dict(payload["config"])
     model = build_model(
-        UNetConfig(
+        ModelConfig(
+            # Checkpoints written before the architecture became a setting
+            # hold no such key, and every one of them is a U-Net.
+            architecture=str(stored.get("architecture", DEFAULT_ARCHITECTURE)),
             encoder_name=str(stored["encoder"]),
             # Pretrained weights are irrelevant here: the checkpoint replaces them.
             encoder_weights=None,

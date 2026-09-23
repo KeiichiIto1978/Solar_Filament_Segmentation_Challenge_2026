@@ -16,7 +16,7 @@ from filament.models.cldice import (
     soft_open,
     soft_skeleton,
 )
-from filament.models.unet import DiceBceLoss
+from filament.models.segmentation import DiceBceLoss
 
 SIZE = 96
 

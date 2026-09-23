@@ -12,7 +12,7 @@ import math
 import pytest
 import torch
 
-from filament.models.unet import DiceBceLoss, UNetConfig, build_model
+from filament.models.segmentation import DiceBceLoss, ModelConfig, build_model
 
 SIZE = 64
 
@@ -21,7 +21,7 @@ SIZE = 64
 def model() -> torch.nn.Module:
     # No pretrained weights: downloading them would make the test need network
     # access, and randomly initialised weights exercise the same shapes.
-    return build_model(UNetConfig(encoder_weights=None))
+    return build_model(ModelConfig(encoder_weights=None))
 
 
 def test_the_model_maps_two_channels_to_one_at_the_same_resolution(
@@ -190,3 +190,36 @@ def test_the_majority_vote_keeps_a_pixel_one_of_two_annotators_drew() -> None:
     # Predicting filament everywhere is right for the first and wrong for the
     # second, which is only true if one half is inside the target.
     assert float(criterion(confident, half)) < float(criterion(confident, minority))
+
+
+@pytest.mark.parametrize("architecture", ["Unet", "UPerNet", "Segformer"])
+def test_every_architecture_on_the_shortlist_keeps_the_input_resolution(
+    architecture: str,
+) -> None:
+    """A decoder that returned a quarter-size map would change what the loss sees.
+
+    The comparison run swaps the decoder between configurations, so the shape
+    contract has to hold for each of them rather than for the U-Net alone.
+
+    Two samples rather than one: UPerNet pools its deepest features into a
+    single cell whatever the input size, and batch normalisation cannot take a
+    mean over one value. Training uses batches of four, so this is a limit on
+    the test rather than on the run.
+    """
+    built = build_model(ModelConfig(architecture=architecture, encoder_weights=None))
+
+    logits = built(torch.zeros(2, 2, SIZE, SIZE))
+
+    assert logits.shape == (2, 1, SIZE, SIZE)
+
+
+def test_the_architecture_may_be_named_in_any_case() -> None:
+    lower = build_model(ModelConfig(architecture="unet", encoder_weights=None))
+
+    assert lower(torch.zeros(1, 2, SIZE, SIZE)).shape == (1, 1, SIZE, SIZE)
+
+
+def test_an_unknown_architecture_is_refused_before_training_starts() -> None:
+    """A typo has to fail at construction, not after an hour of data loading."""
+    with pytest.raises(ValueError, match="Unknown architecture"):
+        build_model(ModelConfig(architecture="Unett", encoder_weights=None))

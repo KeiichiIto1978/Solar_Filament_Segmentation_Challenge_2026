@@ -1,0 +1,40 @@
+# Phase 6, architecture comparison, run 4 of 4.
+#
+# A different family. The encoder attends globally from its first stage
+# rather than building context by halving the resolution five times,
+# which is the step that loses thin structures. At 25M parameters it is
+# the same size as the reference, so a win is not bought with capacity.
+#
+# Everything outside the two lines below is held at the values Phase 1 settled
+# on, so that the difference between these four runs is the network and
+# nothing else. Twenty epochs rather than forty: Phase 1 measured PQ 0.3661 at
+# ten epochs, 0.3793 at twenty and 0.3794 at twenty-nine, so the schedule is
+# cut where it stopped paying. The cosine schedule is set from the epoch count,
+# so each run still completes a full decay rather than being stopped early.
+fold: 0
+image_size: 1024
+
+architecture: Segformer
+encoder: mit_b2
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 4
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase6_d_segformer_mit
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
