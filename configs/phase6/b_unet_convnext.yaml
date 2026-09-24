@@ -1,0 +1,45 @@
+# Phase 6, architecture comparison, run 2 of 4.
+#
+# The encoder alone. Same decoder as the reference, so whatever moves
+# between run 1 and run 2 is the encoder and cannot be anything else.
+# ConvNeXt-Tiny is 32M parameters against ResNet-34's 24M, which is the
+# closest modern convolutional encoder in size.
+#
+# Everything outside the two lines below is held at the values Phase 1 settled
+# on, so that the difference between these four runs is the network and
+# nothing else.
+#
+# Twenty epochs. The checkpoint behind the incumbent PQ 0.3756 was trained for
+# fifteen, and a separate forty-epoch run found its lowest validation loss at
+# epoch eight to ten and never beat it afterwards -- training loss kept falling
+# from 0.315 to 0.193 while validation drifted from 0.366 to 0.379. Twenty
+# gives an unfamiliar network slightly more room than the incumbent had without
+# paying for a length already shown to be wasted. The cosine decay is set from
+# the epoch count, so each run completes its own rather than being cut short.
+fold: 0
+image_size: 1024
+
+architecture: Unet
+encoder: tu-convnext_tiny
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 4
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase6_b_unet_convnext
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0

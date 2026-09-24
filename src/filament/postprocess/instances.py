@@ -80,7 +80,11 @@ def extract_instances(
         min_area: Smallest area to keep, in pixels of the output resolution.
         disk: Solar disk **in the coordinates of** ``probability``. Regions
             outside it are dropped. ``None`` keeps everything.
-        disk_margin: Slack around the limb, in the same coordinates.
+        disk_margin: Slack around the limb, in pixels of ``output_size`` -- the
+            frame, not the map. It is converted here rather than by the caller
+            because there were two callers and only one of them remembered,
+            which left the sweep keeping a ring eight pixels wider than the
+            scoring did and made their numbers incomparable.
         output_size: Side length of the returned masks. Predictions are made at
             a reduced size and scored at 2048.
         join_gap: Rejoin regions up to this far apart, in pixels of the map.
@@ -96,7 +100,11 @@ def extract_instances(
 
     binary = (probability >= threshold).astype(np.uint8)
     if disk is not None:
-        binary &= disk.mask(*binary.shape, margin=disk_margin).astype(np.uint8)
+        # The disk has already been scaled into the map's coordinates; the
+        # margin has to travel with it, or the same number of pixels means a
+        # different distance on the sun at every resolution.
+        scale = probability.shape[0] / output_size
+        binary &= disk.mask(*binary.shape, margin=disk_margin * scale).astype(np.uint8)
 
     count, labels = connected_and_joined(
         binary,

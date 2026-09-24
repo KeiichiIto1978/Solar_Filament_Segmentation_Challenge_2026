@@ -204,3 +204,27 @@ def test_masks_that_barely_touch_are_not_counted() -> None:
 def test_counting_with_nothing_on_one_side_is_zero() -> None:
     assert fusion_and_splitting([], [_square(10, 10, 20)]) == (0, 0)
     assert fusion_and_splitting([_square(10, 10, 20)], []) == (0, 0)
+
+
+def test_the_limb_margin_is_measured_in_frame_pixels_not_map_pixels() -> None:
+    """The margin has to mean the same distance whatever resolution it is read at.
+
+    Two pieces of code produce instances from a map: the one that scores a
+    checkpoint and the one that sweeps post-processing settings. Only the first
+    used to convert the margin into the map's coordinates, so the sweep kept a
+    ring twice as wide and the two could not be compared. The conversion now
+    happens once, inside this function, and this pins it there.
+    """
+    disk = Disk(center_x=63.5, center_y=63.5, radius=30.0)
+    # A blob whose nearest pixel sits about 6 pixels of the map past the limb,
+    # which is 12 pixels of a frame twice the map's size.
+    probability = _map_with_blobs((63, 99, 4, 4))
+    at_frame_scale = {"min_area": 1, "disk": disk, "output_size": SIZE * 2}
+
+    inside = extract_instances(probability, disk_margin=16.0, **at_frame_scale)
+    outside = extract_instances(probability, disk_margin=8.0, **at_frame_scale)
+
+    # 16 frame pixels is 8 map pixels, which reaches the blob; 8 is 4, which
+    # does not. Read as map pixels both would have reached it.
+    assert len(inside) == 1
+    assert len(outside) == 0
