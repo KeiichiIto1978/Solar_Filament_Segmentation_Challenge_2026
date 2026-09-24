@@ -1,0 +1,46 @@
+# Phase 6, architecture comparison, run e.
+#
+# Resolution kept by the network rather than handed to it. HRNet does not
+# reduce and recover: it carries a high-resolution branch alongside the
+# coarser ones through every stage, which is the one design here whose
+# stated purpose is the property this data needs. At 36M it is also as
+# large as the run that overfitted worst, so a win has to survive that.
+#
+# The first four runs were chosen for being strong on public benchmarks and
+# three of the four lost to the 2015 baseline. The reason is now measured:
+# ConvNeXt and MiT reduce the input to a quarter in one stride-four step and
+# expose no feature map at half resolution at all, where ResNet-34 exposes 64
+# channels. At 1024 that missing level is 512 by 512, which is where a filament
+# a few pixels wide lives, and the U-Net decoder's finest skip has nothing to
+# attach to. SQ follows exactly that order.
+#
+# These two are therefore chosen on a property checked beforehand rather than
+# on a reputation: both keep a half-resolution feature map. Everything outside
+# the two lines below is held where Phase 1 left it.
+fold: 0
+image_size: 1024
+
+architecture: Unet
+encoder: tu-hrnet_w32
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 2
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase6_e_unet_hrnet
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
