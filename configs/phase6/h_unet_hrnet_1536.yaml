@@ -1,0 +1,42 @@
+# Phase 6, second round, run h: e and f stacked.
+#
+# HRNet-W32 (run e) at a higher resolution (run f's lever). The two won on
+# different parts of PQ against run a: e on detection, RQ +0.014 with 58
+# fewer false positives; f on the masks, SQ +0.013, the first run to move SQ
+# past 0.6555. If the two causes are independent, both should survive here.
+#
+# 1536 rather than 2048. At 2048 a batch of one HRNet frame holds twice the
+# pixels run e trained on per step, and e was already held to a batch of two
+# at 1024 to fit a T4. At 1536 a batch of one is 2.36M pixels against e's
+# 2.10M. The price is that two things change against e, the resolution and
+# the batch, and the record has to say so.
+#
+# Scoring scales the rejoining distances by 1.5 to keep them the same distance
+# on the Sun as at 1024; the notebook does that from image_size.
+fold: 0
+image_size: 1536
+
+architecture: Unet
+encoder: tu-hrnet_w32
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 1
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase6_h_unet_hrnet_1536
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0

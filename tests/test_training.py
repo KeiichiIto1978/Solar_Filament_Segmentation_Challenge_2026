@@ -128,6 +128,21 @@ def test_the_second_round_changes_one_thing_each_against_run_a() -> None:
         assert differing == expected, name
 
 
+def test_run_h_is_run_e_at_a_higher_resolution() -> None:
+    """h stacks f's lever on e's encoder; the batch is the one other change,
+    forced by the memory, and has to be the only one."""
+    run_e = TrainConfig.from_yaml(Path("configs/phase6/e_unet_hrnet.yaml")).to_dict()
+    run_h = TrainConfig.from_yaml(Path("configs/phase6/h_unet_hrnet_1536.yaml")).to_dict()
+
+    differing = {key for key in run_e if run_e[key] != run_h[key]}
+
+    assert differing == {"image_size", "batch_size", "output_dir"}
+    assert run_h["image_size"] == 1536
+    # The encoder reduces by 32 five levels down; a side that does not divide
+    # would be cropped or padded by the decoder.
+    assert run_h["image_size"] % 32 == 0
+
+
 def test_seeding_makes_torch_reproducible() -> None:
     seed_everything(7)
     first = torch.rand(4)
