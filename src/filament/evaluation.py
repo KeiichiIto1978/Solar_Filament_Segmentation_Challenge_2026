@@ -117,7 +117,11 @@ def predict_probability(
     """Probability of filament per pixel, at ``size`` resolution."""
     prepared = to_model_input(frame, size, clahe_clip_limit, clahe_tile_grid)
     batch = torch.from_numpy(prepared)[None].to(device)
-    return torch.sigmoid(model(batch))[0, 0].detach().cpu().numpy()
+    # Without this every activation is kept for a backward pass that never
+    # comes. Harmless at 1024; at 2048 in full precision it is the difference
+    # between fitting a T4 and not.
+    with torch.inference_mode():
+        return torch.sigmoid(model(batch))[0, 0].cpu().numpy()
 
 
 def predict_frame(

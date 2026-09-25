@@ -96,6 +96,38 @@ def test_the_committed_phase_1_configuration_is_valid() -> None:
     assert config.encoder_weights == "imagenet"
 
 
+def test_asking_for_both_shared_targets_is_rejected(tmp_path: Path) -> None:
+    """The two answer different questions; a run that silently used one of
+    them would be recorded as the other."""
+    config_path = _write(tmp_path, "vote_targets: true\nunion_targets: true\n")
+
+    with pytest.raises(ValueError, match="not both"):
+        TrainConfig.from_yaml(config_path)
+
+
+@pytest.mark.parametrize("path", sorted(Path("configs/phase6").glob("*.yaml")), ids=str)
+def test_every_committed_phase_6_configuration_is_valid(path: Path) -> None:
+    """The notebook reads these on Kaggle, after the session has started; a
+    field that does not parse would cost the minutes spent getting there."""
+    config = TrainConfig.from_yaml(path)
+
+    assert config.fold == 0
+    assert config.epochs == 20
+
+
+def test_the_second_round_changes_one_thing_each_against_run_a() -> None:
+    """g and f are only readable against a if nothing else moved."""
+    reference = TrainConfig.from_yaml(Path("configs/phase6/a_unet_resnet34.yaml")).to_dict()
+    changed = {
+        "g_unet_resnet34_union": {"union_targets", "output_dir"},
+        "f_unet_resnet34_2048": {"image_size", "batch_size", "output_dir"},
+    }
+    for name, expected in changed.items():
+        other = TrainConfig.from_yaml(Path(f"configs/phase6/{name}.yaml")).to_dict()
+        differing = {key for key in reference if reference[key] != other[key]}
+        assert differing == expected, name
+
+
 def test_seeding_makes_torch_reproducible() -> None:
     seed_everything(7)
     first = torch.rand(4)

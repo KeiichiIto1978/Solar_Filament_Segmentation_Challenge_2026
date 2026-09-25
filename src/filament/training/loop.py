@@ -130,10 +130,13 @@ def build_loaders(
         "size": config.image_size,
         "vote_targets": config.vote_targets,
     }
+    # The union is what the network is taught, not what it is scored against,
+    # so only the training side asks for it.
     train_set = FilamentSegmentationDataset(
         stems=fold.train,
         augmentation=Augmentation(**vars(config.augmentation)),
         seed=config.seed,
+        union_targets=config.union_targets,
         **common,
     )
     val_set = FilamentSegmentationDataset(stems=fold.val, augmentation=None, **common)
