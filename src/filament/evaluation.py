@@ -124,6 +124,32 @@ def predict_probability(
         return torch.sigmoid(model(batch))[0, 0].cpu().numpy()
 
 
+def predict_probability_ensemble(
+    models: Iterable[nn.Module],
+    frame: np.ndarray,
+    size: int = DEFAULT_IMAGE_SIZE,
+    device: torch.device | str = "cpu",
+) -> np.ndarray:
+    """Mean of several models' probabilities for one frame, at ``size``.
+
+    Probabilities rather than logits are averaged, so that one model's
+    confident extreme cannot outvote the others; the threshold downstream then
+    reads as the share of the models' belief, as it does for a single model.
+
+    Raises:
+        ValueError: If ``models`` is empty.
+    """
+    total: np.ndarray | None = None
+    count = 0
+    for model in models:
+        probability = predict_probability(model, frame, size, device)
+        total = probability if total is None else total + probability
+        count += 1
+    if total is None:
+        raise ValueError("An ensemble needs at least one model.")
+    return total / count
+
+
 def predict_frame(
     model: nn.Module,
     frame_path: Path | str,

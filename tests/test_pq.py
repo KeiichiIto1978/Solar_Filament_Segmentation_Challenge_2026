@@ -19,6 +19,7 @@ from filament.metrics.pq import (
     compute_pq,
     iou_dice_matrices,
     iou_dice_matrices_rle,
+    pool_pq,
 )
 from filament.submit.rle import mask_to_rle
 
@@ -257,3 +258,35 @@ def test_the_rle_backend_handles_an_empty_side() -> None:
 def test_an_unknown_backend_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown backend"):
         compute_pq(_gt(_bar(0)), _pred(_bar(0)), backend="numpy")  # type: ignore[arg-type]
+
+
+def test_pooling_two_folds_equals_scoring_their_matches_together() -> None:
+    """Hand-computed: fold A has IoUs 0.6 and 0.8 with 1 FP and 2 FN; fold B
+    has one IoU of 0.7 and 3 FP. Together: IoU sum 2.1 over
+    3 + 0.5 * 4 + 0.5 * 2 = 6, so PQ 0.35, SQ 0.7, RQ 0.5."""
+    fold_a = PQResult(pq=0.0, sq=0.7, rq=0.0, tp=2, fp=1, fn=2)
+    fold_b = PQResult(pq=0.0, sq=0.7, rq=0.0, tp=1, fp=3, fn=0)
+
+    pooled = pool_pq([fold_a, fold_b])
+
+    assert (pooled.tp, pooled.fp, pooled.fn) == (3, 4, 2)
+    assert pooled.pq == pytest.approx(0.35)
+    assert pooled.sq == pytest.approx(0.7)
+    assert pooled.rq == pytest.approx(0.5)
+
+
+def test_pooling_weights_folds_by_size_not_equally() -> None:
+    """A small perfect fold must not pull the pooled score up as much as a
+    mean of per-fold PQ would: 1 match at IoU 1.0 beside 9 matches at 0.6 with
+    9 misses pools to 6.4 / 14.5, not to the mean of 1.0 and 0.4."""
+    small = PQResult(pq=1.0, sq=1.0, rq=1.0, tp=1, fp=0, fn=0)
+    large = PQResult(pq=0.0, sq=0.6, rq=0.0, tp=9, fp=0, fn=9)
+
+    pooled = pool_pq([small, large])
+
+    assert pooled.pq == pytest.approx(6.4 / 14.5)
+    assert pooled.pq < (1.0 + 5.4 / 13.5) / 2
+
+
+def test_pooling_nothing_scores_zero() -> None:
+    assert pool_pq([]).pq == 0.0
