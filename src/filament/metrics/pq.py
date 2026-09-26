@@ -282,3 +282,39 @@ def _assemble(tp_ious: list[float], tp_dices: list[float], fp: int, fn: int) -> 
         iou_scores=tp_ious,
         dice_scores=tp_dices,
     )
+
+
+def pool_pq(parts: Iterable[PQResult]) -> PQResult:
+    """Combine scores of disjoint evaluation sets into one, as if scored together.
+
+    Cross-validation folds cover different frames, so their matches and misses
+    simply add up. Averaging the per-fold PQ instead would weight a fold with
+    few filaments as heavily as one with many.
+
+    Only the counts and SQ are used: the sum of matched IoUs is recovered as
+    ``SQ * TP``, which is exact because SQ is their mean. That lets a fold
+    scored in an earlier session, and kept only as a summary, be pooled with
+    fresh ones. The returned result carries no per-match lists.
+
+    Args:
+        parts: Scores of evaluation sets that share no annotator-image.
+
+    Returns:
+        The pooled score.
+    """
+    parts = list(parts)
+    tp = sum(part.tp for part in parts)
+    fp = sum(part.fp for part in parts)
+    fn = sum(part.fn for part in parts)
+    denominator = tp + 0.5 * fp + 0.5 * fn
+    if denominator == 0:
+        return PQResult(pq=0.0, sq=0.0, rq=0.0, tp=0, fp=fp, fn=fn)
+    iou_sum = sum(part.sq * part.tp for part in parts)
+    return PQResult(
+        pq=iou_sum / denominator,
+        sq=iou_sum / tp if tp else 0.0,
+        rq=tp / denominator,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )

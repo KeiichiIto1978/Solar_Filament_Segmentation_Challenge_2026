@@ -20,6 +20,7 @@ from filament.evaluation import (
     evaluate,
     predict_frame,
     predict_probability,
+    predict_probability_ensemble,
     shrink,
 )
 from filament.metrics.overlap import find_overlaps
@@ -206,3 +207,41 @@ def test_a_cached_ground_truth_gives_the_same_score(paths: ProjectPaths) -> None
         with_cache.pq.fp,
         with_cache.pq.fn,
     )
+
+
+class _ConstantLogit(nn.Module):
+    """Answers the same logit everywhere, so the expected mean is known."""
+
+    def __init__(self, logit: float) -> None:
+        super().__init__()
+        self.logit = logit
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        return torch.full((batch.shape[0], 1, *batch.shape[2:]), self.logit)
+
+
+def test_an_ensemble_averages_probabilities_not_logits() -> None:
+    """Logits 0 and 10 give probabilities 0.5 and ~1.0. Their mean is ~0.75;
+    averaging the logits first would give sigmoid(5) ~0.993 instead."""
+    frame = np.full((64, 64), 128, dtype=np.uint8)
+
+    mean = predict_probability_ensemble([_ConstantLogit(0.0), _ConstantLogit(10.0)], frame, size=32)
+
+    expected = (0.5 + 1 / (1 + np.exp(-10.0))) / 2
+    assert mean.shape == (32, 32)
+    assert np.allclose(mean, expected, atol=1e-6)
+
+
+def test_an_ensemble_of_one_is_that_model() -> None:
+    frame = np.full((64, 64), 128, dtype=np.uint8)
+    model = _ConstantLogit(-1.5)
+
+    assert np.array_equal(
+        predict_probability_ensemble([model], frame, size=32),
+        predict_probability(model, frame, size=32),
+    )
+
+
+def test_an_empty_ensemble_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least one model"):
+        predict_probability_ensemble([], np.zeros((64, 64), dtype=np.uint8), size=32)
