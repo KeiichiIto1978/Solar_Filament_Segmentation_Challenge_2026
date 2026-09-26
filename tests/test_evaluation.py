@@ -15,12 +15,16 @@ from filament.data.coco import load_annotations
 from filament.data.split import load_fold
 from filament.evaluation import (
     COUNT_SIZE,
+    DIHEDRAL_VIEWS,
+    FLIP_VIEWS,
     EvaluationResult,
     annotated_masks,
     evaluate,
     predict_frame,
     predict_probability,
     predict_probability_ensemble,
+    predict_probability_tta,
+    predict_probability_views,
     shrink,
 )
 from filament.metrics.overlap import find_overlaps
@@ -245,3 +249,103 @@ def test_an_ensemble_of_one_is_that_model() -> None:
 def test_an_empty_ensemble_is_rejected() -> None:
     with pytest.raises(ValueError, match="at least one model"):
         predict_probability_ensemble([], np.zeros((64, 64), dtype=np.uint8), size=32)
+
+
+def test_every_view_is_undone_by_its_inverse() -> None:
+    """A random array has no symmetry, so any mistake in an inverse shows."""
+    array = torch.rand(1, 2, 16, 16, generator=torch.Generator().manual_seed(0))
+
+    for view in DIHEDRAL_VIEWS:
+        assert torch.equal(view.invert(view.apply(array)), array), view.name
+
+
+def test_the_dihedral_views_are_eight_different_transforms() -> None:
+    """Guards against a set with duplicates, which would weight some views
+    twice and leave others out while still counting eight."""
+    array = torch.arange(16.0).reshape(1, 1, 4, 4)
+
+    transformed = {tuple(view.apply(array).flatten().tolist()) for view in DIHEDRAL_VIEWS}
+
+    assert len(DIHEDRAL_VIEWS) == 8
+    assert len(transformed) == 8
+
+
+class _ReadsTheInput(nn.Module):
+    """Answers from the pixel it sits on, so turning the input turns the answer
+    with it: the kind of model for which every view agrees."""
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        return 10.0 * (batch[:, :1] - 0.5)
+
+
+def test_views_of_an_equivariant_model_agree_with_the_plain_prediction() -> None:
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 256, size=(32, 32), dtype=np.uint8)
+    model = _ReadsTheInput()
+
+    plain = predict_probability(model, frame, size=32)
+    averaged = predict_probability_tta(model, frame, DIHEDRAL_VIEWS, size=32)
+
+    assert np.allclose(averaged, plain, atol=1e-6)
+
+
+class _FixedPixel(nn.Module):
+    """Marks one fixed pixel whatever it is shown, so its answer does not turn
+    with the input. Averaged over views, the pixel lands at each of its images
+    under the views with an equal share, which is known exactly."""
+
+    ROW, COLUMN = 2, 5
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        logits = torch.full((batch.shape[0], 1, *batch.shape[2:]), -30.0)
+        logits[:, :, self.ROW, self.COLUMN] = 30.0
+        return logits
+
+
+def test_views_of_a_fixed_answer_spread_it_evenly_over_its_images() -> None:
+    side = 16
+    frame = np.full((side, side), 128, dtype=np.uint8)
+    row, column, last = _FixedPixel.ROW, _FixedPixel.COLUMN, side - 1
+
+    averaged = predict_probability_tta(_FixedPixel(), frame, DIHEDRAL_VIEWS, size=side)
+
+    # The eight images of (2, 5) under flips, turns and transposes.
+    expected = np.zeros((side, side))
+    for image_row, image_column in [
+        (row, column),
+        (column, row),
+        (row, last - column),
+        (column, last - row),
+        (last - row, column),
+        (last - column, row),
+        (last - row, last - column),
+        (last - column, last - row),
+    ]:
+        expected[image_row, image_column] = 1 / 8
+    assert np.allclose(averaged, expected, atol=1e-6)
+
+
+def test_the_flip_pair_splits_a_fixed_answer_between_it_and_its_mirror() -> None:
+    side = 16
+    frame = np.full((side, side), 128, dtype=np.uint8)
+    row, column = _FixedPixel.ROW, _FixedPixel.COLUMN
+
+    averaged = predict_probability_tta(_FixedPixel(), frame, FLIP_VIEWS, size=side)
+
+    expected = np.zeros((side, side))
+    expected[row, column] = expected[row, side - 1 - column] = 0.5
+    assert np.allclose(averaged, expected, atol=1e-6)
+
+
+def test_the_views_come_back_one_map_per_view() -> None:
+    frame = np.full((32, 32), 128, dtype=np.uint8)
+
+    maps = predict_probability_views(_ConstantLogit(0.0), frame, DIHEDRAL_VIEWS, size=16)
+
+    assert list(maps) == list(DIHEDRAL_VIEWS)
+    assert all(probability.shape == (16, 16) for probability in maps.values())
+
+
+def test_an_empty_set_of_views_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least one view"):
+        predict_probability_tta(_ConstantLogit(0.0), np.zeros((32, 32), dtype=np.uint8), [])
