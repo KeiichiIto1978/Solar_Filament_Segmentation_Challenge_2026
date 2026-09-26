@@ -52,6 +52,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--device", type=str, default=None, help="Force a device, e.g. cpu or cuda."
     )
     parser.add_argument(
+        "--num-workers", type=int, default=None, help="Override the DataLoader workers."
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
         help="One tiny epoch on a few batches, to check the wiring without a GPU.",
@@ -72,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         batch_size=args.batch_size,
         encoder=args.encoder,
         output_dir=args.output_dir,
+        num_workers=args.num_workers,
     )
     if args.smoke:
         config = replace(

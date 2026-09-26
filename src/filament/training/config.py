@@ -86,6 +86,10 @@ class TrainConfig:
         max_val_batches: Same, for validation.
         vote_targets: Train against the share of annotators who drew each
             pixel rather than against one annotator's own tracing.
+        union_targets: Train against every pixel any annotator of the frame
+            drew. Validation keeps each annotator's own tracing, so the
+            checkpoint is still chosen against what the metric scores.
+            Exclusive with ``vote_targets``.
         crops: Train on one filament at a time, cut out of the frame at full
             resolution, instead of on whole frames shrunk to fit. Changes the
             input to three channels: the crop, its contrast-equalised version,
@@ -108,9 +112,16 @@ class TrainConfig:
     max_train_batches: int | None = None
     max_val_batches: int | None = None
     vote_targets: bool = False
+    union_targets: bool = False
     crops: CropConfig | None = None
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     loss: LossConfig = field(default_factory=LossConfig)
+
+    def __post_init__(self) -> None:
+        # Caught here rather than when the dataset is built, which is after the
+        # annotations have been read and a session's minutes spent.
+        if self.vote_targets and self.union_targets:
+            raise ValueError("Choose one of vote_targets and union_targets, not both.")
 
     @classmethod
     def from_yaml(cls, path: Path | str, **overrides: Any) -> TrainConfig:

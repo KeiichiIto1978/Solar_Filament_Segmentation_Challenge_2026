@@ -1,0 +1,46 @@
+# Phase 6, second round, run f.
+#
+# Resolution handed to the network. Identical to run a except that frames are
+# kept at their native 2048 and the batch is one instead of four, which holds
+# the pixels per step where they were: 2048^2 x 1 = 1024^2 x 4.
+#
+# Why. The encoders that lost in the first round have no half-resolution
+# feature map, and at 1024 that missing level is where a filament a few pixels
+# wide lives. More directly, 266 of fold 0's filaments get no pixel above 0.05
+# even inside a correct box, and they are the small ones. At 2048 nothing is
+# thrown away before the network sees it.
+#
+# Risk. Every BatchNorm layer now takes its statistics from one frame. If
+# training is unstable, the fallback is 1536 at batch two.
+#
+# Scoring at 2048 has one catch: the rejoining distances are in pixels of the
+# probability map, so they have to be doubled to mean the same distance on the
+# Sun as they do at 1024. The notebook does that; the minimum area is already
+# in pixels of the full frame and does not change.
+fold: 0
+image_size: 2048
+
+architecture: Unet
+encoder: resnet34
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 1
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase6_f_unet_resnet34_2048
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0

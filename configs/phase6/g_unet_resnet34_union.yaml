@@ -1,0 +1,46 @@
+# Phase 6, second round, run g.
+#
+# The target, not the network. Identical to run a in every line except
+# union_targets: each training sample is asked for every pixel anyone who
+# annotated its frame drew, instead of what its own annotator drew.
+#
+# Why. A frame three people annotated is three samples with one input and three
+# different answers, and the network settles on an average of them. Measured on
+# the annotations alone over fold 0's multi-annotator frames, the union of the
+# annotators predicts any one of them with a Dice loss of 0.222; the incumbent
+# network gets 0.347 and another single annotator 0.375. The metric points the
+# same way: a filament k of n people drew is worth emitting at IoU u when
+# k * u > 0.5 * n * PQ, and at PQ 0.375 and u 0.66 that holds even for one of
+# three.
+#
+# Only the training side changes. Validation loss and PQ are still measured
+# against each annotator's own tracing, so the number is comparable with a to d.
+fold: 0
+image_size: 1024
+
+architecture: Unet
+encoder: resnet34
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 4
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+union_targets: true
+
+output_dir: outputs/phase6_g_unet_resnet34_union
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0

@@ -6,7 +6,7 @@ against three different ground truths, so it appears three times here, once per
 annotator. Collapsing the three into one sample would also change how much a
 frame weighs in the gradient, and the metric weighs it three times.
 
-Two kinds of target can sit on that sample.
+Three kinds of target can sit on that sample.
 
 *Per annotator* (the default): the filaments that one person drew, as zeros and
 ones. A frame three people annotated then carries three conflicting targets,
@@ -20,6 +20,15 @@ averaged into something uncalibrated, which is what lets the decision to emit it
 be made afterwards, at the threshold, where Panoptic Quality can be reasoned
 about: a filament k of n people drew is worth emitting at IoU u when
 ``k * u > 0.5 * n * PQ``.
+
+*Union*: every pixel anyone who looked at that frame drew, as zeros and ones.
+The same inequality is the reason: at PQ 0.375 and u 0.66 even a filament one
+of three people drew is worth emitting (0.66 > 0.56), so the network is asked to
+find it outright rather than to learn a share and leave the decision to a
+threshold. Measured on annotations alone, the union of a frame's annotators is
+by far the best single prediction of any one of them. It is only asked of the
+training side; validation keeps each annotator's own tracing, because that is
+what the metric scores.
 
 The target is semantic, not per-instance: every filament that annotator drew is
 burned into one binary mask, and instances are recovered afterwards by splitting
@@ -149,6 +158,41 @@ def build_vote_target(
     return resize(votes, size, mask=True)
 
 
+def build_union_target(
+    entries: Sequence[AnnotatorImage],
+    size: int = DEFAULT_IMAGE_SIZE,
+) -> np.ndarray:
+    """Every pixel any annotator of one frame drew, as a binary mask.
+
+    Built at full resolution and resized nearest-neighbour, like
+    :func:`build_target`, so that the only difference between the two is whose
+    filaments are burned in. A frame one person annotated gives back exactly
+    what :func:`build_target` would.
+
+    Args:
+        entries: Every annotator's view of the same frame. Must not be empty.
+        size: Side length of the returned mask.
+
+    Returns:
+        A ``(size, size)`` ``uint8`` array of zeros and ones.
+
+    Raises:
+        ValueError: If ``entries`` is empty or they are not all the same frame.
+    """
+    if not entries:
+        raise ValueError("A union needs at least one annotator.")
+    stems = {entry.stem for entry in entries}
+    if len(stems) != 1:
+        raise ValueError(f"Expected one frame, got {sorted(stems)}.")
+
+    first = entries[0]
+    full = np.zeros((first.height, first.width), dtype=np.uint8)
+    for entry in entries:
+        for annotation in entry.annotations:
+            full |= polygon_to_mask(annotation.segmentation, entry.height, entry.width)
+    return resize(full, size, mask=True)
+
+
 class FilamentSegmentationDataset(TorchDataset):
     """Annotator-images as (2-channel frame, target map) pairs.
 
@@ -168,6 +212,13 @@ class FilamentSegmentationDataset(TorchDataset):
             their weighting are untouched: every annotator-image is still one
             sample, so a frame three people annotated still counts three times,
             and all three now carry the same target.
+        union_targets: Ask for every pixel anyone who annotated the frame drew.
+            Weighted like ``vote_targets``: one sample per annotator, all of a
+            frame's samples carrying the same target.
+
+    Raises:
+        ValueError: If both kinds of shared target are asked for, or no
+            annotator-image is left after filtering.
     """
 
     def __init__(
@@ -183,12 +234,16 @@ class FilamentSegmentationDataset(TorchDataset):
         clahe_clip_limit: float = CLAHE_CLIP_LIMIT,
         clahe_tile_grid: tuple[int, int] = CLAHE_TILE_GRID,
         vote_targets: bool = False,
+        union_targets: bool = False,
     ) -> None:
+        if vote_targets and union_targets:
+            raise ValueError("Choose one of vote_targets and union_targets, not both.")
         selected = dataset if stems is None else dataset.subset(set(stems))
         self.entries: list[AnnotatorImage] = list(selected.annotator_images)
         if not self.entries:
             raise ValueError("No annotator-images left after filtering by stem.")
         self.vote_targets = vote_targets
+        self.union_targets = union_targets
         self._by_stem = selected.by_stem()
 
         self.images_dir = Path(images_dir)
@@ -213,6 +268,8 @@ class FilamentSegmentationDataset(TorchDataset):
         image = to_model_input(frame, self.size, self.clahe_clip_limit, self.clahe_tile_grid)
         if self.vote_targets:
             target = build_vote_target(self._by_stem[entry.stem], self.size)
+        elif self.union_targets:
+            target = build_union_target(self._by_stem[entry.stem], self.size)
         else:
             target = build_target(entry, self.size)
 

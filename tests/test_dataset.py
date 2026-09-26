@@ -11,6 +11,7 @@ from filament.data.dataset import (
     Augmentation,
     FilamentSegmentationDataset,
     build_target,
+    build_union_target,
     build_vote_target,
 )
 from filament.data.split import load_fold
@@ -267,3 +268,83 @@ def test_vote_targets_change_nothing_on_a_single_annotator_frame(paths: ProjectP
     shares = FilamentSegmentationDataset(**common, vote_targets=True)
 
     assert torch.equal(per_annotator[0]["target"], shares[0]["target"])
+
+
+def test_a_union_keeps_every_pixel_any_annotator_drew() -> None:
+    """Three annotators: a square all three drew, one only two drew, and one
+    only the third drew. All three survive, as plain ones."""
+    size = 32
+    shared = [4.0, 4.0, 12.0, 4.0, 12.0, 12.0, 4.0, 12.0]
+    extra = [20.0, 20.0, 28.0, 20.0, 28.0, 28.0, 20.0, 28.0]
+    lone = [20.0, 4.0, 28.0, 4.0, 28.0, 12.0, 20.0, 12.0]
+    entries = [
+        _annotator_image("frame", "a", [shared, extra], size),
+        _annotator_image("frame", "b", [shared, extra], size),
+        _annotator_image("frame", "c", [shared, lone], size),
+    ]
+
+    union = build_union_target(entries, size=size)
+
+    assert union.dtype == np.uint8
+    assert union[8, 8] == 1
+    assert union[24, 24] == 1
+    assert union[8, 24] == 1
+    assert union[0, 0] == 0
+    # Nothing beyond what someone drew: the union of the three masks, exactly.
+    expected = np.zeros_like(union)
+    for entry in entries:
+        expected |= build_target(entry, size=size)
+    assert np.array_equal(union, expected)
+
+
+def test_a_union_of_one_annotator_is_their_own_tracing() -> None:
+    size = 32
+    square = [4.0, 4.0, 12.0, 4.0, 12.0, 12.0, 4.0, 12.0]
+    entry = _annotator_image("frame", "a", [square], size)
+
+    assert np.array_equal(build_union_target([entry], size=size), build_target(entry, size=size))
+
+
+def test_a_union_needs_annotators_of_one_frame() -> None:
+    size = 16
+    square = [2.0, 2.0, 6.0, 2.0, 6.0, 6.0, 2.0, 6.0]
+
+    with pytest.raises(ValueError, match="at least one annotator"):
+        build_union_target([], size=size)
+    with pytest.raises(ValueError, match="Expected one frame"):
+        build_union_target(
+            [
+                _annotator_image("one", "a", [square], size),
+                _annotator_image("two", "a", [square], size),
+            ],
+            size=size,
+        )
+
+
+@pytest.mark.dataset
+def test_votes_and_union_cannot_both_be_asked_for(paths: ProjectPaths) -> None:
+    dataset = load_annotations(paths.train_annotations)
+    with pytest.raises(ValueError, match="not both"):
+        FilamentSegmentationDataset(
+            dataset, paths.train_images, size=SIZE, vote_targets=True, union_targets=True
+        )
+
+
+@pytest.mark.dataset
+def test_union_targets_keep_one_sample_per_annotator(paths: ProjectPaths) -> None:
+    """Three annotators, three samples, one shared binary answer that covers
+    each annotator's own tracing."""
+    dataset = load_annotations(paths.train_annotations)
+    stem = next(s for s, entries in dataset.by_stem().items() if len(entries) == 3)
+
+    common = {"dataset": dataset, "images_dir": paths.train_images, "stems": [stem], "size": SIZE}
+    union = FilamentSegmentationDataset(**common, union_targets=True)
+    own = FilamentSegmentationDataset(**common)
+
+    assert len(union) == 3
+    targets = [union[index]["target"] for index in range(3)]
+    assert torch.equal(targets[0], targets[1])
+    assert torch.equal(targets[1], targets[2])
+    assert sorted(torch.unique(targets[0]).tolist()) == [0.0, 1.0]
+    for index in range(3):
+        assert bool((own[index]["target"] <= targets[0]).all())
