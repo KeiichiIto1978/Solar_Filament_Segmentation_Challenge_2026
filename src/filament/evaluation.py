@@ -150,6 +150,92 @@ def predict_probability_ensemble(
     return total / count
 
 
+@dataclass(frozen=True)
+class View:
+    """One symmetry of the square: an optional left-right flip, then quarter turns.
+
+    The eight combinations are the transforms the training augmentation draws
+    from, so every view shows the model a frame of the kind it was trained on.
+    Both directions act on the last two axes, which lets the same view turn the
+    ``(N, C, H, W)`` input and the ``(N, 1, H, W)`` output.
+    """
+
+    flip: bool
+    turns: int
+
+    @property
+    def name(self) -> str:
+        """A short label, such as ``flip_rot90``."""
+        return ("flip_" if self.flip else "") + f"rot{90 * self.turns}"
+
+    def apply(self, array: torch.Tensor) -> torch.Tensor:
+        """Turn an image into this view."""
+        if self.flip:
+            array = torch.flip(array, dims=(-1,))
+        return torch.rot90(array, self.turns, dims=(-2, -1))
+
+    def invert(self, array: torch.Tensor) -> torch.Tensor:
+        """Turn a prediction made in this view back to the original orientation."""
+        array = torch.rot90(array, -self.turns, dims=(-2, -1))
+        if self.flip:
+            array = torch.flip(array, dims=(-1,))
+        return array
+
+
+IDENTITY = View(flip=False, turns=0)
+FLIP_VIEWS = (IDENTITY, View(flip=True, turns=0))
+DIHEDRAL_VIEWS = tuple(View(flip=flip, turns=turns) for flip in (False, True) for turns in range(4))
+
+
+def predict_probability_views(
+    model: nn.Module,
+    frame: np.ndarray,
+    views: Iterable[View] = DIHEDRAL_VIEWS,
+    size: int = DEFAULT_IMAGE_SIZE,
+    device: torch.device | str = "cpu",
+) -> dict[View, np.ndarray]:
+    """The model's probability map from each view, turned back to the frame.
+
+    Returned per view rather than averaged, so that one set of forward passes
+    can be averaged over several subsets of views (identity only, the flip
+    pair, all eight) and the subsets compared on identical predictions.
+
+    The views transform the prepared input, after the contrast equalisation,
+    which is where the training augmentation applies them. One view is run at a
+    time, so memory stays that of a single prediction.
+    """
+    prepared = to_model_input(frame, size)
+    batch = torch.from_numpy(prepared)[None].to(device)
+    maps: dict[View, np.ndarray] = {}
+    with torch.inference_mode():
+        for view in views:
+            probability = torch.sigmoid(model(view.apply(batch)))
+            maps[view] = view.invert(probability)[0, 0].cpu().numpy()
+    return maps
+
+
+def predict_probability_tta(
+    model: nn.Module,
+    frame: np.ndarray,
+    views: Iterable[View] = DIHEDRAL_VIEWS,
+    size: int = DEFAULT_IMAGE_SIZE,
+    device: torch.device | str = "cpu",
+) -> np.ndarray:
+    """Mean probability over the given views of one frame, at ``size``.
+
+    Probabilities are averaged, as in :func:`predict_probability_ensemble` and
+    for the same reason: a view that is confidently wrong cannot outvote the
+    rest.
+
+    Raises:
+        ValueError: If ``views`` is empty.
+    """
+    maps = predict_probability_views(model, frame, views, size, device)
+    if not maps:
+        raise ValueError("Test-time augmentation needs at least one view.")
+    return np.mean(list(maps.values()), axis=0)
+
+
 def predict_frame(
     model: nn.Module,
     frame_path: Path | str,
