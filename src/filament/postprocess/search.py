@@ -28,11 +28,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import pandas as pd
 
 from filament.data.disk import Disk
-from filament.metrics.pq import PQResult, compute_pq
+from filament.metrics.pq import PQResult, compute_pq, pool_pq
 from filament.postprocess.instances import (
     DEFAULT_MIN_AREA,
     DEFAULT_THRESHOLD,
@@ -254,6 +255,93 @@ def _default_builder(
         join_angle=float(values.get("join_angle", DEFAULT_MAX_ANGLE)),
         join_offset=float(values.get("join_offset", DEFAULT_MAX_OFFSET)),
     )
+
+
+def resampled_builder(
+    probability: np.ndarray, disk: Disk | None, values: Mapping[str, Any]
+) -> list[Any]:
+    """Instances from one map, post-processed at ``values["resolution"]``.
+
+    A map is upsampled bilinearly before thresholding when the setting asks
+    for a finer resolution than it was predicted at. On fold 0 of Phase 8 that
+    alone raised PQ by 0.0045, so the resolution is a post-processing parameter
+    like the threshold, and is swept with them.
+
+    The rejoining distances in ``values`` are read in pixels of the map *as
+    given*, and scaled with it, so that one setting means the same distance on
+    the Sun at either resolution. The disk travels with the map. Without a
+    ``resolution`` the map is used as it is, exactly as by the default chain.
+    """
+    resolution = int(values.get("resolution", probability.shape[0]))
+    scale = resolution / probability.shape[0]
+    if scale != 1.0:
+        probability = cv2.resize(
+            probability, (resolution, resolution), interpolation=cv2.INTER_LINEAR
+        )
+        disk = None if disk is None else disk.scaled(scale)
+    scaled = dict(values) | {
+        "join_gap": float(values.get("join_gap", 0.0)) * scale,
+        "join_offset": float(values.get("join_offset", DEFAULT_MAX_OFFSET)) * scale,
+    }
+    return _default_builder(probability, disk, scaled)
+
+
+def pool_sweeps(results: Iterable[SweepResult]) -> SweepResult:
+    """Pool sweeps of the same settings over disjoint frames, setting by setting.
+
+    Each fold of a cross-validation is swept on its own held-out frames; this
+    gives, for every setting, the score all folds together would have, which is
+    the number a setting is chosen on. :meth:`SweepResult.plateau` then reads
+    the pooled curve as it reads one fold's.
+
+    Raises:
+        ValueError: If there is nothing to pool, or the sweeps do not hold the
+            same settings in the same order.
+    """
+    sweeps = list(results)
+    if not sweeps:
+        raise ValueError("There are no sweeps to pool.")
+    reference = [point.setting.values for point in sweeps[0].points]
+    for other in sweeps[1:]:
+        if [point.setting.values for point in other.points] != reference:
+            raise ValueError("Only sweeps of the same settings, in the same order, can be pooled.")
+    points = []
+    for position, first in enumerate(sweeps[0].points):
+        column = [result.points[position] for result in sweeps]
+        points.append(
+            SweepPoint(
+                setting=first.setting,
+                pq=pool_pq(point.pq for point in column),
+                predictions=sum(point.predictions for point in column),
+                seconds=sum(point.seconds for point in column),
+            )
+        )
+    return SweepResult(points=points)
+
+
+def save_map_bundle(maps: Mapping[str, np.ndarray], path: Path | str) -> Path:
+    """Write many probability maps into one compressed file, a byte per pixel.
+
+    One file per fold rather than one per frame: Kaggle keeps at most 500
+    output files, and a cross-validation has 707 held-out frames. Stored as in
+    :func:`save_map`, so the two formats round-trip to the same values.
+    """
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    quantised = {
+        stem: np.clip(np.rint(np.asarray(probability, dtype=np.float32) * 255.0), 0, 255).astype(
+            np.uint8
+        )
+        for stem, probability in maps.items()
+    }
+    np.savez_compressed(destination, **quantised)
+    return destination if destination.suffix == ".npz" else destination.with_suffix(".npz")
+
+
+def load_map_bundle(path: Path | str) -> dict[str, np.ndarray]:
+    """Read a file written by :func:`save_map_bundle`, as float32 in ``[0, 1]``."""
+    with np.load(Path(path)) as stored:
+        return {stem: stored[stem].astype(np.float32) / 255.0 for stem in stored.files}
 
 
 def save_map(probability: np.ndarray, path: Path | str) -> Path:
