@@ -394,3 +394,22 @@ def test_a_bundle_of_maps_round_trips_through_a_byte(tmp_path: Path) -> None:
         assert loaded[stem].dtype == np.float32
         # A byte resolves the probability to 1/255; rounding is to the nearest step.
         assert np.abs(loaded[stem] - probability).max() <= 0.5 / 255 + 1e-6
+
+
+def test_a_stored_sweep_reads_back_with_its_settings_and_counts() -> None:
+    original = SweepResult(
+        [
+            _scored(8, 2, 4, 0.6, threshold=0.4, resolution=2048),
+            _scored(6, 1, 6, 0.7, threshold=0.5, resolution=1024),
+        ]
+    )
+
+    restored = SweepResult.from_records(original.to_records())
+
+    assert [point.setting.values for point in restored.points] == [
+        point.setting.values for point in original.points
+    ]
+    for before, after in zip(original.points, restored.points, strict=True):
+        assert (after.pq.tp, after.pq.fp, after.pq.fn) == (before.pq.tp, before.pq.fp, before.pq.fn)
+        assert after.pq.pq == pytest.approx(before.pq.pq)
+        assert after.pq.sq == pytest.approx(before.pq.sq)

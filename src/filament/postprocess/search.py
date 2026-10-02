@@ -87,6 +87,10 @@ class SweepPoint:
         }
 
 
+# The keys of a stored sweep point that are scores, not parameters.
+RECORD_FIELDS = frozenset({"pq", "sq", "rq", "tp", "fp", "fn", "predictions", "seconds"})
+
+
 @dataclass(frozen=True)
 class SweepResult:
     """Every point of a sweep, in the order they were evaluated."""
@@ -152,6 +156,37 @@ class SweepResult:
 
         widest = max(runs, key=len)
         return widest[len(widest) // 2], widest
+
+    def to_records(self) -> list[dict[str, Any]]:
+        """Every point as a flat record, in order: what a sweep is stored as."""
+        return [point.to_row() for point in self.points]
+
+    @classmethod
+    def from_records(cls, records: Iterable[Mapping[str, Any]]) -> SweepResult:
+        """Rebuild a sweep stored by :meth:`to_records`.
+
+        The per-match lists are not stored, so the points carry the counts and
+        SQ only. That is all :func:`pool_sweeps` and :meth:`plateau` read.
+        """
+        points = []
+        for record in records:
+            values = {key: value for key, value in record.items() if key not in RECORD_FIELDS}
+            points.append(
+                SweepPoint(
+                    setting=Setting(values),
+                    pq=PQResult(
+                        pq=float(record["pq"]),
+                        sq=float(record["sq"]),
+                        rq=float(record["rq"]),
+                        tp=int(record["tp"]),
+                        fp=int(record["fp"]),
+                        fn=int(record["fn"]),
+                    ),
+                    predictions=int(record["predictions"]),
+                    seconds=float(record["seconds"]),
+                )
+            )
+        return cls(points=points)
 
 
 def grid(**axes: Sequence[Any]) -> list[Setting]:
