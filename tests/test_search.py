@@ -8,15 +8,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from filament.data.disk import Disk
 from filament.metrics.pq import PQResult
 from filament.postprocess.search import (
     Setting,
     SweepPoint,
     SweepResult,
     grid,
+    load_map_bundle,
     load_maps,
+    pool_sweeps,
     predict_from_maps,
+    resampled_builder,
     save_map,
+    save_map_bundle,
     sweep,
 )
 from filament.submit.rle import SUBMISSION_COLUMNS, mask_to_rle
@@ -285,3 +290,126 @@ def test_a_sweep_point_and_a_direct_call_agree() -> None:
     swept = sweep(maps, gt_df, [setting], output_size=OUTPUT_SIZE)
 
     assert swept.points[0].predictions == len(direct)
+
+
+def test_without_a_resolution_the_resampled_builder_is_the_default_chain() -> None:
+    maps = {STEM: _probability_map((10, 10, 40, 20), (60, 60, 30, 50))}
+    setting = Setting({"threshold": 0.5, "min_area": 10, "join_gap": 8.0})
+
+    default = predict_from_maps(maps, setting, output_size=OUTPUT_SIZE)
+    resampled = predict_from_maps(maps, setting, output_size=OUTPUT_SIZE, build=resampled_builder)
+
+    assert default.equals(resampled)
+
+
+@pytest.mark.parametrize("join_gap, expected", [(8.0, 1), (4.0, 2)])
+def test_a_setting_means_the_same_distance_at_either_resolution(
+    join_gap: float, expected: int
+) -> None:
+    """Two collinear pieces 6 map pixels apart: a gap of 8 joins them and a gap
+    of 4 does not. At twice the resolution they are 12 pixels apart, so the
+    answer only stays the same if the distances are doubled with the map."""
+    maps = {STEM: _probability_map((20, 20, 6, 30), (20, 56, 6, 30))}
+    values = {"threshold": 0.5, "min_area": 10, "join_gap": join_gap}
+
+    for resolution in (SIZE, 2 * SIZE):
+        setting = Setting(values | {"resolution": resolution})
+        frame = predict_from_maps(maps, setting, output_size=OUTPUT_SIZE, build=resampled_builder)
+        assert len(frame) == expected, resolution
+
+
+def test_the_disk_is_scaled_with_the_map() -> None:
+    """A box at the centre is on the disk and one in the corner is off it. Were
+    the disk left at the map's scale, the centre box would fall outside it."""
+    maps = {STEM: _probability_map((60, 60, 8, 8), (2, 2, 8, 20))}
+    disks = {STEM: Disk(center_x=64.0, center_y=64.0, radius=30.0)}
+    setting = Setting({"threshold": 0.5, "min_area": 10, "resolution": 2 * SIZE})
+
+    frame = predict_from_maps(
+        maps, setting, disks=disks, output_size=OUTPUT_SIZE, build=resampled_builder
+    )
+
+    assert len(frame) == 1
+
+
+def _scored(tp: int, fp: int, fn: int, sq: float, **values: object) -> SweepPoint:
+    """A sweep point whose counts are given, PQ following from them."""
+    rq = tp / (tp + 0.5 * fp + 0.5 * fn)
+    return SweepPoint(
+        setting=Setting(dict(values)),
+        pq=PQResult(pq=sq * rq, sq=sq, rq=rq, tp=tp, fp=fp, fn=fn),
+        predictions=tp + fp,
+        seconds=1.0,
+    )
+
+
+def test_pooled_sweeps_add_up_the_counts_setting_by_setting() -> None:
+    """Fold a: 8 matches at IoU 0.6, fold b: 2 at IoU 0.9. Pooled, the matched
+    IoUs sum to 4.8 + 1.8 = 6.6 over 10 matches, so SQ is 0.66 -- not the 0.75
+    a plain mean of the two SQs would give."""
+    fold_a = SweepResult(
+        [_scored(8, 2, 4, 0.6, threshold=0.4), _scored(6, 1, 6, 0.6, threshold=0.5)]
+    )
+    fold_b = SweepResult(
+        [_scored(2, 2, 0, 0.9, threshold=0.4), _scored(1, 0, 1, 0.9, threshold=0.5)]
+    )
+
+    pooled = pool_sweeps([fold_a, fold_b])
+
+    first = pooled.points[0]
+    assert first.setting.values == {"threshold": 0.4}
+    assert (first.pq.tp, first.pq.fp, first.pq.fn) == (10, 4, 4)
+    assert first.pq.sq == pytest.approx(0.66)
+    assert first.pq.pq == pytest.approx(6.6 / (10 + 0.5 * 4 + 0.5 * 4))
+    assert first.predictions == 14
+    assert [point.setting.values for point in pooled.points] == [
+        {"threshold": 0.4},
+        {"threshold": 0.5},
+    ]
+
+
+def test_sweeps_of_different_settings_are_not_pooled() -> None:
+    fold_a = SweepResult([_scored(8, 2, 4, 0.6, threshold=0.4)])
+    fold_b = SweepResult([_scored(8, 2, 4, 0.6, threshold=0.5)])
+
+    with pytest.raises(ValueError, match="same settings"):
+        pool_sweeps([fold_a, fold_b])
+
+
+def test_pooling_nothing_is_rejected() -> None:
+    with pytest.raises(ValueError, match="no sweeps"):
+        pool_sweeps([])
+
+
+def test_a_bundle_of_maps_round_trips_through_a_byte(tmp_path: Path) -> None:
+    rng = np.random.default_rng(0)
+    maps = {f"frame{index}": rng.random((16, 16)).astype(np.float32) for index in range(3)}
+
+    written = save_map_bundle(maps, tmp_path / "fold0.npz")
+    loaded = load_map_bundle(written)
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["fold0.npz"]
+    assert sorted(loaded) == sorted(maps)
+    for stem, probability in maps.items():
+        assert loaded[stem].dtype == np.float32
+        # A byte resolves the probability to 1/255; rounding is to the nearest step.
+        assert np.abs(loaded[stem] - probability).max() <= 0.5 / 255 + 1e-6
+
+
+def test_a_stored_sweep_reads_back_with_its_settings_and_counts() -> None:
+    original = SweepResult(
+        [
+            _scored(8, 2, 4, 0.6, threshold=0.4, resolution=2048),
+            _scored(6, 1, 6, 0.7, threshold=0.5, resolution=1024),
+        ]
+    )
+
+    restored = SweepResult.from_records(original.to_records())
+
+    assert [point.setting.values for point in restored.points] == [
+        point.setting.values for point in original.points
+    ]
+    for before, after in zip(original.points, restored.points, strict=True):
+        assert (after.pq.tp, after.pq.fp, after.pq.fn) == (before.pq.tp, before.pq.fp, before.pq.fn)
+        assert after.pq.pq == pytest.approx(before.pq.pq)
+        assert after.pq.sq == pytest.approx(before.pq.sq)
