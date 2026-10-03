@@ -347,6 +347,45 @@ def prediction_outcomes(
     return pd.DataFrame(rows, columns=columns)
 
 
+def pq_from_outcomes(rows: pd.DataFrame, ground_truth: int) -> PQResult:
+    """The score of the predictions in ``rows``, without matching anything again.
+
+    ``rows`` are those of :func:`prediction_outcomes`, possibly with some
+    predictions removed. Since removing a prediction changes no other row (see
+    there), this is exactly what :func:`compute_pq` would give for the
+    predictions that remain, which makes any filter on the predictions cheap to
+    evaluate.
+
+    Args:
+        rows: Outcome rows; every row of a kept prediction must be present.
+        ground_truth: Number of annotated filaments over the same
+            annotator-images, which is where the false negatives come from.
+
+    Returns:
+        The score. Its per-match lists are empty, as for :func:`pool_pq`.
+    """
+    tp = int(rows["matches"].sum())
+    fp = int((~rows["matched"].astype(bool)).sum())
+    fn = ground_truth - tp
+    if fn < 0:
+        raise ValueError(
+            f"{tp} matches against {ground_truth} annotated filaments: the rows and the "
+            "ground-truth count do not describe the same annotator-images."
+        )
+    denominator = tp + 0.5 * fp + 0.5 * fn
+    if denominator == 0:
+        return PQResult(pq=0.0, sq=0.0, rq=0.0, tp=0, fp=fp, fn=fn)
+    matched_iou = float(rows["matched_iou"].sum())
+    return PQResult(
+        pq=matched_iou / denominator,
+        sq=matched_iou / tp if tp else 0.0,
+        rq=tp / denominator,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )
+
+
 def _assemble(tp_ious: list[float], tp_dices: list[float], fp: int, fn: int) -> PQResult:
     """Turn the accumulated matches into PQ, SQ and RQ."""
     tp = len(tp_ious)

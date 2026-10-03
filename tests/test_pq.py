@@ -20,6 +20,7 @@ from filament.metrics.pq import (
     iou_dice_matrices,
     iou_dice_matrices_rle,
     pool_pq,
+    pq_from_outcomes,
     prediction_outcomes,
 )
 from filament.submit.rle import mask_to_rle
@@ -374,3 +375,34 @@ def test_a_prediction_over_two_overlapping_tracings_counts_twice(score: Scorer) 
     assert len(rows) == 1
     assert int(rows["matches"].iloc[0]) == 2
     assert rows["matched_iou"].iloc[0] == pytest.approx(1.0 + 990 / 1010)
+
+
+def test_the_score_rebuilt_from_rows_is_the_score_after_dropping_predictions() -> None:
+    """Drop one prediction from the rows and from the submission: the two
+    routes have to give the same PQ, or every filter evaluated on rows is
+    measuring something else."""
+    gt = pd.concat(
+        [
+            _gt(_bar(0), _bar(1200, 100), annotator_image=f"040301-{STEM}"),
+            _gt(_bar(300), annotator_image=f"010401-{STEM}"),
+        ],
+        ignore_index=True,
+    )
+    pred = _pred(_bar(0), _bar(1150, 200))
+    rows = _outcomes(gt, pred)
+
+    for dropped in (None, f"{STEM}_1", f"{STEM}_2"):
+        kept_pred = pred[pred["filament_id"] != dropped]
+        kept_rows = rows[rows["filament_id"] != dropped]
+        expected = compute_pq(gt, kept_pred, height=HEIGHT, width=WIDTH)
+        rebuilt = pq_from_outcomes(kept_rows, ground_truth=len(gt))
+        assert (rebuilt.tp, rebuilt.fp, rebuilt.fn) == (expected.tp, expected.fp, expected.fn)
+        assert rebuilt.pq == pytest.approx(expected.pq)
+        assert rebuilt.sq == pytest.approx(expected.sq)
+
+
+def test_rows_that_claim_more_matches_than_filaments_are_rejected() -> None:
+    rows = _outcomes(_gt(_bar(0)), _pred(_bar(0)))
+
+    with pytest.raises(ValueError, match="do not describe the same"):
+        pq_from_outcomes(rows, ground_truth=0)

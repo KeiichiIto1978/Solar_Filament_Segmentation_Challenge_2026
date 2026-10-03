@@ -20,6 +20,7 @@ dependencies = [
     "torchvision>=0.19,<1.0",
     "segmentation-models-pytorch>=0.4,<0.6",
     "opencv-python-headless>=4.10,<5.0",
+    "scikit-learn>=1.5,<1.8",
 ]
 
 # torch is installed from the CPU wheel index: this machine has no GPU, and
