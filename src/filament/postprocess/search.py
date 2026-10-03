@@ -36,6 +36,7 @@ from filament.data.disk import Disk
 from filament.metrics.pq import PQResult, compute_pq, pool_pq
 from filament.postprocess.instances import (
     DEFAULT_MIN_AREA,
+    DEFAULT_MIN_SCORE,
     DEFAULT_THRESHOLD,
     extract_instances,
     instances_to_rows,
@@ -289,6 +290,7 @@ def _default_builder(
         join_gap=float(values.get("join_gap", 0.0)),
         join_angle=float(values.get("join_angle", DEFAULT_MAX_ANGLE)),
         join_offset=float(values.get("join_offset", DEFAULT_MAX_OFFSET)),
+        min_score=float(values.get("min_score", DEFAULT_MIN_SCORE)),
     )
 
 

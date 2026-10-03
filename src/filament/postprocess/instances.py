@@ -45,6 +45,9 @@ DEFAULT_MIN_AREA = 200
 # 8-connectivity: a filament one pixel wide that steps diagonally is one
 # filament, not a chain of separate ones.
 CONNECTIVITY = 8
+# No instance is dropped for its score unless asked: the cut is a parameter to
+# sweep, and a default that removed anything would change every earlier result.
+DEFAULT_MIN_SCORE = 0.0
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,7 @@ def extract_instances(
     join_gap: float = 0.0,
     join_angle: float = DEFAULT_MAX_ANGLE,
     join_offset: float = DEFAULT_MAX_OFFSET,
+    min_score: float = DEFAULT_MIN_SCORE,
 ) -> list[Instance]:
     """Split a probability map into non-overlapping filament masks.
 
@@ -91,6 +95,8 @@ def extract_instances(
             Zero switches the rejoining off, which is the plain behaviour.
         join_angle: Largest angle between two regions' long axes, in degrees.
         join_offset: How far one region may sit off the other's axis.
+        min_score: Drop an instance whose score -- the mean probability over
+            its region -- is below this. The default drops nothing.
 
     Returns:
         Instances ordered by descending score. Their masks never overlap.
@@ -119,6 +125,8 @@ def extract_instances(
         # The mean probability over the region is the only score available
         # here; a semantic model gives no per-instance confidence.
         score = float(probability[region].mean())
+        if score < min_score:
+            continue
         mask = _to_output_size(region, output_size)
         area = int(mask.sum())
         if area < min_area:

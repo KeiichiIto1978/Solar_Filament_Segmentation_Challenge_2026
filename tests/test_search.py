@@ -413,3 +413,26 @@ def test_a_stored_sweep_reads_back_with_its_settings_and_counts() -> None:
         assert (after.pq.tp, after.pq.fp, after.pq.fn) == (before.pq.tp, before.pq.fp, before.pq.fn)
         assert after.pq.pq == pytest.approx(before.pq.pq)
         assert after.pq.sq == pytest.approx(before.pq.sq)
+
+
+@pytest.mark.parametrize("resolution", [SIZE, 2 * SIZE])
+def test_a_score_cut_in_a_setting_reaches_the_instances(resolution: int) -> None:
+    """``min_score`` has to travel through the sweep's builder, or a sweep over
+    it would score the same instances at every value."""
+    maps = {
+        STEM: _probability_map((10, 10, 12, 12), value=0.9)
+        + _probability_map((60, 60, 12, 12), value=0.6)
+    }
+    values = {"threshold": 0.5, "min_area": 10, "resolution": resolution}
+
+    kept = predict_from_maps(
+        maps, Setting(values), output_size=OUTPUT_SIZE, build=resampled_builder
+    )
+    cut = predict_from_maps(
+        maps,
+        Setting(values | {"min_score": 0.75}),
+        output_size=OUTPUT_SIZE,
+        build=resampled_builder,
+    )
+
+    assert (len(kept), len(cut)) == (2, 1)
