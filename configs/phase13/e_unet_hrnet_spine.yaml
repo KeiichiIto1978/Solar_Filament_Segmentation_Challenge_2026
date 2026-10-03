@@ -1,0 +1,37 @@
+# Phase 13: run e of Phase 6b with the annotators' spines as a second target.
+#
+# Phase 12 traced 953 of the 3,501 misses to long filaments the model finds
+# only the darkest third of, and estimated that recovering two thirds of them
+# would take the pooled PQ past 0.45. Every annotation carries a hand-drawn
+# centre line running from one end of the filament to the other; the
+# organisers allow it as auxiliary supervision. A second output channel learns
+# it, so that the shared features learn where a filament runs, and inference
+# reads only the first channel. Everything else is run e, line for line.
+fold: 0
+image_size: 1024
+
+architecture: Unet
+encoder: tu-hrnet_w32
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 2
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase13_e_unet_hrnet_spine
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
+  spine_weight: 1.0

@@ -35,6 +35,7 @@ from filament.models.segmentation import (
     INPUT_CHANNELS,
     DiceBceLoss,
     ModelConfig,
+    SpineLoss,
     build_model,
 )
 from filament.paths import ProjectPaths, load_paths
@@ -129,6 +130,7 @@ def build_loaders(
         "images_dir": paths.train_images,
         "size": config.image_size,
         "vote_targets": config.vote_targets,
+        "spine_targets": bool(config.loss.spine_weight),
     }
     # The union is what the network is taught, not what it is scored against,
     # so only the training side asks for it.
@@ -246,15 +248,20 @@ def train(
             encoder_name=config.encoder,
             encoder_weights=config.encoder_weights,
             in_channels=CROP_CHANNELS if config.crops is not None else INPUT_CHANNELS,
+            classes=config.output_channels,
         )
     ).to(target_device)
-    criterion = DiceBceLoss(
+    criterion: nn.Module = DiceBceLoss(
         dice_weight=config.loss.dice_weight,
         bce_weight=config.loss.bce_weight,
         dice_majority=config.loss.dice_majority,
         cldice_weight=config.loss.cldice_weight,
         cldice_iterations=config.loss.cldice_iterations,
     )
+    if config.loss.spine_weight:
+        # The validation loss then includes the spine term too, so the best
+        # checkpoint is chosen on both tasks together.
+        criterion = SpineLoss(criterion, DiceBceLoss(), config.loss.spine_weight)
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
@@ -340,6 +347,8 @@ def load_checkpoint(
             # is being asked for. The configuration stored beside the weights is
             # what says which kind this is.
             in_channels=CROP_CHANNELS if stored.get("crops") else INPUT_CHANNELS,
+            # A spine model has a second output channel; inference reads the first.
+            classes=2 if dict(stored.get("loss") or {}).get("spine_weight") else 1,
         )
     )
     model.load_state_dict(payload["model"])
