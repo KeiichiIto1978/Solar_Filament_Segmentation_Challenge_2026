@@ -228,3 +228,30 @@ def test_the_limb_margin_is_measured_in_frame_pixels_not_map_pixels() -> None:
     # does not. Read as map pixels both would have reached it.
     assert len(inside) == 1
     assert len(outside) == 0
+
+
+def _two_blobs_of_different_confidence() -> np.ndarray:
+    """One blob at 0.9 and one at 0.6, both above a threshold of 0.5."""
+    probability = _map_with_blobs((10, 10, 12, 12), value=0.9)
+    probability[60:72, 60:72] = 0.6
+    return probability
+
+
+def test_without_a_score_cut_every_instance_is_kept() -> None:
+    """The default must leave earlier results untouched."""
+    instances = extract_instances(
+        _two_blobs_of_different_confidence(), min_area=1, output_size=SIZE
+    )
+
+    assert sorted(round(instance.score, 3) for instance in instances) == [0.6, 0.9]
+
+
+def test_a_score_cut_drops_only_the_instances_below_it() -> None:
+    probability = _two_blobs_of_different_confidence()
+
+    kept = extract_instances(probability, min_area=1, output_size=SIZE, min_score=0.75)
+
+    assert [round(instance.score, 3) for instance in kept] == [0.9]
+    # The cut acts on whole instances: the survivor's mask is unchanged.
+    full = extract_instances(probability, min_area=1, output_size=SIZE)
+    assert np.array_equal(kept[0].mask, full[0].mask)

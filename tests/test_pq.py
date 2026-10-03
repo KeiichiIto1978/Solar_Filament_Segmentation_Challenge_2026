@@ -20,6 +20,7 @@ from filament.metrics.pq import (
     iou_dice_matrices,
     iou_dice_matrices_rle,
     pool_pq,
+    prediction_outcomes,
 )
 from filament.submit.rle import mask_to_rle
 
@@ -290,3 +291,86 @@ def test_pooling_weights_folds_by_size_not_equally() -> None:
 
 def test_pooling_nothing_scores_zero() -> None:
     assert pool_pq([]).pq == 0.0
+
+
+def _outcomes(gt: pd.DataFrame, pred: pd.DataFrame, **kwargs: object) -> pd.DataFrame:
+    return prediction_outcomes(gt, pred, height=HEIGHT, width=WIDTH, **kwargs)  # type: ignore[arg-type]
+
+
+def test_a_near_miss_records_how_near_it_came() -> None:
+    """Shifted by 400 of 1000 pixels, the bars overlap in 600 and cover 1400:
+    IoU 0.4286, a false positive that nearly matched."""
+    rows = _outcomes(_gt(_bar(0)), _pred(_bar(400)))
+
+    assert len(rows) == 1
+    assert rows["best_iou"].iloc[0] == pytest.approx(600 / 1400)
+    assert not rows["matched"].iloc[0]
+
+
+def test_a_prediction_gets_one_row_per_annotator_of_its_frame() -> None:
+    """Annotator 040301 drew the filament and 010401 did not: the same
+    prediction is a match for one and a false positive for the other."""
+    first = _gt(_bar(0), annotator_image=f"040301-{STEM}")
+    second = _gt(_bar(1200, 100), annotator_image=f"010401-{STEM}")
+    gt = pd.concat([first, second], ignore_index=True)
+
+    rows = _outcomes(gt, _pred(_bar(0))).set_index("annotator_image")
+
+    assert bool(rows.loc[f"040301-{STEM}", "matched"])
+    assert not bool(rows.loc[f"010401-{STEM}", "matched"])
+    assert rows.loc[f"010401-{STEM}", "best_iou"] == 0.0
+
+
+def test_an_annotator_image_without_ground_truth_leaves_every_prediction_unmatched() -> None:
+    empty_gt = pd.DataFrame({"filament_id": [], "segmentation_rle": []}, dtype=str)
+
+    rows = _outcomes(
+        empty_gt, _pred(_bar(0, 10), _bar(100, 10)), annotator_images=[ANNOTATOR_IMAGE]
+    )
+
+    assert len(rows) == 2
+    assert not rows["matched"].any()
+    assert (rows["best_iou"] == 0.0).all()
+
+
+def test_the_outcomes_add_up_to_the_true_and_false_positives_of_the_score(score: Scorer) -> None:
+    """The breakdown is only useful if it is the same matching as the metric:
+    matched rows are the true positives and unmatched rows the false positives,
+    across annotators, near misses and an image nobody annotated."""
+    other = "20150101000000Bh"
+    gt = pd.concat(
+        [
+            _gt(_bar(0), _bar(1200, 100), annotator_image=f"040301-{STEM}"),
+            _gt(_bar(300), annotator_image=f"010401-{STEM}"),
+        ],
+        ignore_index=True,
+    )
+    pred = pd.concat(
+        [_pred(_bar(0), _bar(1150, 200)), _pred(_bar(0, 50), stem=other)], ignore_index=True
+    )
+    scored = [f"040301-{STEM}", f"010401-{STEM}", f"040301-{other}"]
+
+    result = score(gt, pred, annotator_images=scored)
+    rows = _outcomes(gt, pred, annotator_images=scored)
+
+    assert int(rows["matches"].sum()) == result.tp
+    assert int((~rows["matched"]).sum()) == result.fp
+    assert rows["matched_iou"].sum() / (result.tp + 0.5 * result.fp + 0.5 * result.fn) == (
+        pytest.approx(result.pq)
+    )
+
+
+def test_a_prediction_over_two_overlapping_tracings_counts_twice(score: Scorer) -> None:
+    """One annotator traced the same filament twice, almost identically. A
+    prediction clears IoU 0.5 against both, and the metric counts two true
+    positives; the row has to say so, or PQ rebuilt from the rows comes out
+    short."""
+    gt = _gt(_bar(0), _bar(10))
+
+    result = score(gt, _pred(_bar(0)))
+    rows = _outcomes(gt, _pred(_bar(0)))
+
+    assert result.tp == 2
+    assert len(rows) == 1
+    assert int(rows["matches"].iloc[0]) == 2
+    assert rows["matched_iou"].iloc[0] == pytest.approx(1.0 + 990 / 1010)

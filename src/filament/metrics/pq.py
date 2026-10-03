@@ -262,6 +262,91 @@ def compute_pq(
     return _assemble(tp_ious, tp_dices, false_positives, false_negatives)
 
 
+def prediction_outcomes(
+    gt_df: pd.DataFrame,
+    pred_df: pd.DataFrame,
+    height: int = FULL_HEIGHT,
+    width: int = FULL_WIDTH,
+    annotator_images: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """What became of each prediction, once per annotator-image it was scored in.
+
+    :func:`compute_pq` says how many false positives there are; this says which
+    predictions they were and how near they came. The matching rule is the
+    same -- a pair is a true positive strictly above ``IOU_THRESHOLD`` -- so
+    the rows with ``matched`` False are exactly the false positives
+    :func:`compute_pq` counts over the same annotator-images, ``matches``
+    summed is its true positives and ``matched_iou`` summed its numerator.
+    ``matches`` exceeds one only when one annotator's own filaments overlap and
+    a prediction clears IoU 0.5 against two of them; the metric then counts two
+    true positives.
+
+    Because predictions never overlap, no ground-truth filament is matched by
+    two of them, and dropping a prediction changes no other row. PQ after
+    removing any subset of predictions can therefore be rebuilt from these rows
+    alone, with ``FN = annotated filaments - sum(matches)``.
+
+    A prediction is scored once for every annotator of its frame, so it has one
+    row per annotator-image. A row that is unmatched while another row of the
+    same ``filament_id`` is matched is a filament one annotator drew and another
+    did not: a false positive the model cannot remove.
+
+    Args:
+        gt_df: Ground truth, as for :func:`compute_pq`.
+        pred_df: Predictions, as for :func:`compute_pq`. ``filament_id`` must be
+            unique.
+        height: Mask height; 2048 for this dataset.
+        width: Mask width; 2048 for this dataset.
+        annotator_images: Annotator-images to score, as for :func:`compute_pq`.
+
+    Returns:
+        One row per prediction and annotator-image, with columns
+        ``annotator_image``, ``filament_id``, ``best_iou`` (the highest IoU with
+        any of that annotator's filaments, 0 when there are none), ``matched``,
+        ``matches`` (filaments it clears the threshold against) and
+        ``matched_iou`` (the sum of those IoUs).
+    """
+    gt_by_annotator_image = group_by_image(gt_df)
+    ids_by_image: dict[str, list[str]] = defaultdict(list)
+    rles_by_image: dict[str, list[str]] = defaultdict(list)
+    for filament_id, counts in zip(
+        pred_df["filament_id"], pred_df["segmentation_rle"], strict=True
+    ):
+        image_id = str(filament_id).split("_", 1)[0]
+        ids_by_image[image_id].append(str(filament_id))
+        rles_by_image[image_id].append(str(counts))
+
+    scored = (
+        sorted(gt_by_annotator_image) if annotator_images is None else sorted(set(annotator_images))
+    )
+    rows: list[tuple[str, str, float, bool, int, float]] = []
+    for annotator_image in scored:
+        image_id = annotator_image_to_image(annotator_image)
+        ids = ids_by_image.get(image_id, [])
+        if not ids:
+            continue
+        gt_rles = gt_by_annotator_image.get(annotator_image, [])
+        if not gt_rles:
+            rows.extend((annotator_image, filament_id, 0.0, False, 0, 0.0) for filament_id in ids)
+            continue
+        iou, _ = iou_dice_matrices_rle(gt_rles, rles_by_image[image_id], height, width)
+        hit = iou > IOU_THRESHOLD
+        for column, filament_id in enumerate(ids):
+            matches = int(hit[:, column].sum())
+            rows.append(
+                (
+                    annotator_image,
+                    filament_id,
+                    float(iou[:, column].max()),
+                    matches > 0,
+                    matches,
+                    float(iou[hit[:, column], column].sum()),
+                )
+            )
+    columns = ["annotator_image", "filament_id", "best_iou", "matched", "matches", "matched_iou"]
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _assemble(tp_ious: list[float], tp_dices: list[float], fp: int, fn: int) -> PQResult:
     """Turn the accumulated matches into PQ, SQ and RQ."""
     tp = len(tp_ious)
