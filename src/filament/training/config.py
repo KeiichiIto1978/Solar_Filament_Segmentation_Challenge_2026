@@ -47,6 +47,9 @@ class LossConfig:
     dice_majority: float = 0.5
     cldice_weight: float = 0.0
     cldice_iterations: int = DEFAULT_ITERATIONS
+    # Weight of the auxiliary spine target. Zero keeps the network at one
+    # output channel and the loss as every earlier phase had it.
+    spine_weight: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,8 @@ class TrainConfig:
         # annotations have been read and a session's minutes spent.
         if self.vote_targets and self.union_targets:
             raise ValueError("Choose one of vote_targets and union_targets, not both.")
+        if self.loss.spine_weight and self.crops is not None:
+            raise ValueError("Spine targets are drawn on whole frames, not on crops.")
 
     @classmethod
     def from_yaml(cls, path: Path | str, **overrides: Any) -> TrainConfig:
@@ -162,6 +167,11 @@ class TrainConfig:
         if "output_dir" in values:
             values["output_dir"] = Path(values["output_dir"])
         return cls(**values)
+
+    @property
+    def output_channels(self) -> int:
+        """Mask alone, or mask and spine."""
+        return 2 if self.loss.spine_weight else 1
 
     def to_dict(self) -> dict[str, Any]:
         """A YAML-writable view of the configuration."""

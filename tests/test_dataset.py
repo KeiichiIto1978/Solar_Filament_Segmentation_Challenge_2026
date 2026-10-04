@@ -10,6 +10,7 @@ from filament.data.coco import Annotation, AnnotatorImage, load_annotations
 from filament.data.dataset import (
     Augmentation,
     FilamentSegmentationDataset,
+    build_spine_target,
     build_target,
     build_union_target,
     build_vote_target,
@@ -348,3 +349,85 @@ def test_union_targets_keep_one_sample_per_annotator(paths: ProjectPaths) -> Non
     assert sorted(torch.unique(targets[0]).tolist()) == [0.0, 1.0]
     for index in range(3):
         assert bool((own[index]["target"] <= targets[0]).all())
+
+
+def _with_spines(entry: AnnotatorImage, spines: list[list[float]]) -> AnnotatorImage:
+    """The same annotator-image with the given spines on its filaments."""
+    annotations = [
+        Annotation(**{**vars(annotation), "spine": spine})
+        for annotation, spine in zip(entry.annotations, spines, strict=True)
+    ]
+    return AnnotatorImage(**{**vars(entry), "annotations": annotations})
+
+
+def test_a_spine_is_drawn_as_a_thin_line_along_its_points() -> None:
+    """A spine from (100, 1000) to (1900, 1000) on a 2048 frame, drawn five
+    pixels wide and halved: a line about two pixels thick along row 500, from
+    column 50 to 950, and nothing anywhere else."""
+    entry = _with_spines(
+        _annotator_image("20140101000000Bh", "040301", [[0, 0, 1, 0, 1, 1]], 2048),
+        [[100.0, 1000.0, 1000.0, 1000.0, 1900.0, 1000.0]],
+    )
+
+    spine = build_spine_target([entry], size=1024)
+
+    rows, columns = np.nonzero(spine)
+    assert spine.dtype == np.uint8 and set(np.unique(spine)) == {0, 1}
+    assert rows.min() >= 498 and rows.max() <= 502
+    assert columns.min() == pytest.approx(50, abs=2) and columns.max() == pytest.approx(950, abs=2)
+    assert 2 <= spine[:, 500].sum() <= 4
+
+
+def test_the_spines_of_several_annotators_are_all_drawn() -> None:
+    stem = "20140101000000Bh"
+    first = _with_spines(
+        _annotator_image(stem, "040301", [[0, 0, 1, 0, 1, 1]], 512), [[10.0, 100.0, 200.0, 100.0]]
+    )
+    second = _with_spines(
+        _annotator_image(stem, "010401", [[0, 0, 1, 0, 1, 1]], 512), [[10.0, 300.0, 200.0, 300.0]]
+    )
+
+    spine = build_spine_target([first, second], size=512)
+
+    assert spine[100, 100] == 1 and spine[300, 100] == 1
+
+
+def test_augmentation_moves_a_stacked_target_like_each_of_its_channels() -> None:
+    """The mask and the spine must stay on the same pixels whatever the turn."""
+    image = np.random.default_rng(0).random((2, 8, 8)).astype(np.float32)
+    mask = np.zeros((8, 8), dtype=np.uint8)
+    mask[1, 2] = 1
+    spine = np.zeros((8, 8), dtype=np.uint8)
+    spine[5, 6] = 1
+
+    for seed in range(12):
+        _, alone = Augmentation().apply(image.copy(), mask.copy(), np.random.default_rng(seed))
+        _, stacked = Augmentation().apply(
+            image.copy(), np.stack([mask, spine]), np.random.default_rng(seed)
+        )
+        _, spine_alone = Augmentation().apply(
+            image.copy(), spine.copy(), np.random.default_rng(seed)
+        )
+        assert np.array_equal(stacked[0], alone)
+        assert np.array_equal(stacked[1], spine_alone)
+
+
+@pytest.mark.dataset
+def test_a_sample_with_spines_carries_mask_and_spine(paths: ProjectPaths) -> None:
+    dataset = load_annotations(paths.train_annotations)
+    stems = load_fold(0, paths.splits_dir).val[:1]
+    plain = FilamentSegmentationDataset(dataset, paths.train_images, stems=stems, size=SIZE)
+    with_spines = FilamentSegmentationDataset(
+        dataset, paths.train_images, stems=stems, size=SIZE, spine_targets=True
+    )
+
+    first, second = plain[0], with_spines[0]
+
+    assert first["target"].shape == (1, SIZE, SIZE)
+    assert second["target"].shape == (2, SIZE, SIZE)
+    # The mask channel is untouched by asking for spines.
+    assert torch.equal(second["target"][0], first["target"][0])
+    spine = second["target"][1]
+    assert spine.sum() > 0
+    # A spine runs inside its filament: nearly all of it lies on the mask.
+    assert (spine * first["target"][0]).sum() / spine.sum() > 0.8

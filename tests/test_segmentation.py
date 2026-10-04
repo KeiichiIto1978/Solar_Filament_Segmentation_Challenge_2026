@@ -12,7 +12,7 @@ import math
 import pytest
 import torch
 
-from filament.models.segmentation import DiceBceLoss, ModelConfig, build_model
+from filament.models.segmentation import DiceBceLoss, ModelConfig, SpineLoss, build_model
 
 SIZE = 64
 
@@ -223,3 +223,24 @@ def test_an_unknown_architecture_is_refused_before_training_starts() -> None:
     """A typo has to fail at construction, not after an hour of data loading."""
     with pytest.raises(ValueError, match="Unknown architecture"):
         build_model(ModelConfig(architecture="Unett", encoder_weights=None))
+
+
+def test_the_spine_loss_adds_the_weighted_spine_term_to_the_mask_term() -> None:
+    torch.manual_seed(0)
+    logits = torch.randn(2, 2, 16, 16)
+    target = (torch.rand(2, 2, 16, 16) > 0.8).float()
+    mask_loss, spine_loss = DiceBceLoss(), DiceBceLoss()
+
+    combined = SpineLoss(mask_loss, spine_loss, spine_weight=0.5)(logits, target)
+
+    expected = mask_loss(logits[:, :1], target[:, :1]) + 0.5 * spine_loss(
+        logits[:, 1:], target[:, 1:]
+    )
+    assert torch.allclose(combined, expected)
+
+
+def test_the_spine_loss_needs_two_channels() -> None:
+    with pytest.raises(ValueError, match="two channels"):
+        SpineLoss(DiceBceLoss(), DiceBceLoss(), 1.0)(
+            torch.zeros(1, 1, 8, 8), torch.zeros(1, 1, 8, 8)
+        )

@@ -191,3 +191,53 @@ def test_a_short_run_writes_a_checkpoint_that_can_be_reloaded(
     with torch.no_grad():
         logits = model(torch.zeros(1, 2, 128, 128))
     assert logits.shape == (1, 1, 128, 128)
+
+
+def test_a_spine_weight_gives_the_network_a_second_output() -> None:
+    assert TrainConfig().output_channels == 1
+    assert TrainConfig.from_dict({"loss": {"spine_weight": 1.0}}).output_channels == 2
+
+
+def test_spines_are_not_offered_on_crops() -> None:
+    with pytest.raises(ValueError, match="not on crops"):
+        TrainConfig.from_dict({"loss": {"spine_weight": 1.0}, "crops": {}})
+
+
+@pytest.mark.dataset
+def test_a_short_spine_run_reloads_with_two_outputs(tmp_path: Path, paths: ProjectPaths) -> None:
+    """The checkpoint has to remember the second channel, or loading it for
+    inference would fail on the weights of the last layer."""
+    config = replace(
+        TrainConfig.from_dict({"loss": {"spine_weight": 1.0}}),
+        image_size=128,
+        epochs=1,
+        batch_size=2,
+        encoder="resnet18",
+        encoder_weights=None,
+        max_train_batches=2,
+        max_val_batches=1,
+        amp=False,
+        num_workers=0,
+        output_dir=tmp_path / "run",
+    )
+
+    result = train(config, paths=paths, device="cpu")
+    model, _ = load_checkpoint(result.checkpoint, device="cpu")
+
+    with torch.no_grad():
+        logits = model(torch.zeros(1, 2, 128, 128))
+    assert logits.shape == (1, 2, 128, 128)
+
+
+def test_the_spine_run_is_run_e_with_spines() -> None:
+    """The comparison with the retrained run e is only readable if the spine
+    weight is the one thing that differs."""
+    run_e = TrainConfig.from_yaml(Path("configs/phase6/e_unet_hrnet.yaml")).to_dict()
+    spine = TrainConfig.from_yaml(Path("configs/phase13/e_unet_hrnet_spine.yaml")).to_dict()
+
+    differing = {key for key in run_e if run_e[key] != spine[key]}
+
+    assert differing == {"loss", "output_dir"}
+    assert {key for key in run_e["loss"] if run_e["loss"][key] != spine["loss"][key]} == {
+        "spine_weight"
+    }

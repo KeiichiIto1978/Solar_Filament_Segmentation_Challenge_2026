@@ -177,3 +177,37 @@ class DiceBceLoss(nn.Module):
                 probability, flat_target.view_as(probability)
             )
         return loss
+
+
+class SpineLoss(nn.Module):
+    """The mask loss on the first channel, plus a weighted spine loss on the second.
+
+    The spine channel is an auxiliary target: it is trained so that the shared
+    features learn where a filament runs from end to end, and it is never read
+    at inference, where only the first channel -- the mask -- is used. Both
+    channels are scored with the same Dice plus cross-entropy, which suits a
+    spine for the same reason it suits a filament: a line a few pixels wide is
+    a sliver of the frame, and cross-entropy alone would let it vanish.
+
+    Args:
+        mask_loss: Loss of the mask channel.
+        spine_loss: Loss of the spine channel.
+        spine_weight: Weight of the spine term.
+    """
+
+    def __init__(self, mask_loss: nn.Module, spine_loss: nn.Module, spine_weight: float) -> None:
+        super().__init__()
+        self.mask_loss = mask_loss
+        self.spine_loss = spine_loss
+        self.spine_weight = spine_weight
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Loss of a ``(N, 2, H, W)`` batch of logits against its two-channel target."""
+        if logits.shape[1] != 2 or target.shape[1] != 2:
+            raise ValueError(
+                f"Expected two channels, mask and spine; got logits {tuple(logits.shape)} "
+                f"and target {tuple(target.shape)}."
+            )
+        mask = self.mask_loss(logits[:, :1], target[:, :1])
+        spine = self.spine_loss(logits[:, 1:], target[:, 1:])
+        return mask + self.spine_weight * spine

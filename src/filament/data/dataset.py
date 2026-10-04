@@ -35,6 +35,15 @@ burned into one binary mask, and instances are recovered afterwards by splitting
 the prediction into connected regions. That is what makes overlapping masks
 impossible, and a rejected submission with them.
 
+*Spine* (optional, alongside any of the three): the centre line each annotator
+drew along each filament, from one end to the other, as a second channel. A
+filament's outline differs between annotators in width and in how far into its
+faint ends it is carried; its spine says where it runs. Phase 12 found the
+largest share of misses to be long filaments the model finds only the darkest
+third of, which is what a target running end to end is meant to teach. The
+spine follows the same annotators as the mask: this sample's own, or every
+annotator of the frame for the vote and union targets.
+
 Frames are resized to 1024 rather than kept at 2048. At full resolution a batch
 of even two frames does not fit a T4, and the median filament is 1,228 pixels,
 which survives halving comfortably.
@@ -46,6 +55,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset as TorchDataset
@@ -61,6 +71,10 @@ from filament.data.image import (
 )
 
 DEFAULT_IMAGE_SIZE = 1024
+# Width of a drawn spine in pixels of the full 2048 frame. Wide enough to
+# survive halving to 1024 as a continuous line two or three pixels across,
+# narrow enough to stay inside all but the thinnest filaments.
+SPINE_THICKNESS = 5
 
 
 @dataclass(frozen=True)
@@ -80,16 +94,20 @@ class Augmentation:
     def apply(
         self, image: np.ndarray, target: np.ndarray, rng: np.random.Generator
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Apply the same random transform to a ``(C, H, W)`` image and a mask."""
+        """Apply the same random transform to a ``(C, H, W)`` image and its target.
+
+        The target is a ``(H, W)`` mask or a ``(K, H, W)`` stack of them; either
+        way the transform acts on its last two axes, as on the image's.
+        """
         if self.horizontal_flip and rng.random() < 0.5:
-            image, target = image[:, :, ::-1], target[:, ::-1]
+            image, target = image[:, :, ::-1], target[..., ::-1]
         if self.vertical_flip and rng.random() < 0.5:
-            image, target = image[:, ::-1, :], target[::-1, :]
+            image, target = image[:, ::-1, :], target[..., ::-1, :]
         if self.quarter_turns:
             turns = int(rng.integers(0, 4))
             if turns:
                 image = np.rot90(image, turns, axes=(1, 2))
-                target = np.rot90(target, turns, axes=(0, 1))
+                target = np.rot90(target, turns, axes=(-2, -1))
         return np.ascontiguousarray(image), np.ascontiguousarray(target)
 
 
@@ -193,6 +211,46 @@ def build_union_target(
     return resize(full, size, mask=True)
 
 
+def build_spine_target(
+    entries: Sequence[AnnotatorImage],
+    size: int = DEFAULT_IMAGE_SIZE,
+    thickness: int = SPINE_THICKNESS,
+) -> np.ndarray:
+    """Every spine the given annotators drew, as a binary line mask.
+
+    Drawn at full resolution and resized nearest-neighbour, like the masks,
+    so the line lands on the same pixels the outline does.
+
+    Args:
+        entries: Annotators of one frame whose spines to draw; usually one.
+            Must not be empty.
+        size: Side length of the returned mask.
+        thickness: Line width at full resolution.
+
+    Returns:
+        A ``(size, size)`` ``uint8`` array of zeros and ones.
+
+    Raises:
+        ValueError: If ``entries`` is empty or they are not all the same frame.
+    """
+    if not entries:
+        raise ValueError("A spine target needs at least one annotator.")
+    stems = {entry.stem for entry in entries}
+    if len(stems) != 1:
+        raise ValueError(f"Expected one frame, got {sorted(stems)}.")
+
+    first = entries[0]
+    full = np.zeros((first.height, first.width), dtype=np.uint8)
+    for entry in entries:
+        for annotation in entry.annotations:
+            points = np.asarray(annotation.spine, dtype=np.float64).reshape(-1, 2)
+            if len(points) == 0:
+                continue
+            polyline = np.rint(points).astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(full, [polyline], isClosed=False, color=1, thickness=thickness)
+    return resize(full, size, mask=True)
+
+
 class FilamentSegmentationDataset(TorchDataset):
     """Annotator-images as (2-channel frame, target map) pairs.
 
@@ -215,6 +273,8 @@ class FilamentSegmentationDataset(TorchDataset):
         union_targets: Ask for every pixel anyone who annotated the frame drew.
             Weighted like ``vote_targets``: one sample per annotator, all of a
             frame's samples carrying the same target.
+        spine_targets: Add the annotators' spines as a second target channel,
+            making the target ``(2, size, size)`` instead of ``(1, size, size)``.
 
     Raises:
         ValueError: If both kinds of shared target are asked for, or no
@@ -235,6 +295,7 @@ class FilamentSegmentationDataset(TorchDataset):
         clahe_tile_grid: tuple[int, int] = CLAHE_TILE_GRID,
         vote_targets: bool = False,
         union_targets: bool = False,
+        spine_targets: bool = False,
     ) -> None:
         if vote_targets and union_targets:
             raise ValueError("Choose one of vote_targets and union_targets, not both.")
@@ -244,6 +305,7 @@ class FilamentSegmentationDataset(TorchDataset):
             raise ValueError("No annotator-images left after filtering by stem.")
         self.vote_targets = vote_targets
         self.union_targets = union_targets
+        self.spine_targets = spine_targets
         self._by_stem = selected.by_stem()
 
         self.images_dir = Path(images_dir)
@@ -272,6 +334,12 @@ class FilamentSegmentationDataset(TorchDataset):
             target = build_union_target(self._by_stem[entry.stem], self.size)
         else:
             target = build_target(entry, self.size)
+        if self.spine_targets:
+            # The spine follows the mask: whose filaments the mask asks for,
+            # their spines.
+            shared = self.vote_targets or self.union_targets
+            annotators = self._by_stem[entry.stem] if shared else [entry]
+            target = np.stack([target, build_spine_target(annotators, self.size)])
 
         if self.mask_outside_disk:
             disk = detect_disk(frame).scaled(self.size / frame.shape[0])
@@ -285,7 +353,10 @@ class FilamentSegmentationDataset(TorchDataset):
 
         return {
             "image": torch.from_numpy(image.astype(np.float32)),
-            "target": torch.from_numpy(target.astype(np.float32))[None],
+            # One channel per target: (1, H, W) for the mask alone.
+            "target": torch.from_numpy(
+                target.astype(np.float32) if target.ndim == 3 else target.astype(np.float32)[None]
+            ),
             "image_id": entry.image_id,
             "stem": entry.stem,
         }
