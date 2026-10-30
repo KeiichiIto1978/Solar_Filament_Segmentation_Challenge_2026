@@ -1,0 +1,93 @@
+"""Tests for growing emitted filaments into a second map's support.
+
+The cases are built so that each limit -- connectivity, reach, the threshold,
+and the split between two filaments -- is the one that decides.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from filament.postprocess.grow import grow_instances
+from filament.postprocess.instances import Instance
+
+SIDE = 60
+
+
+def _instance(rows: slice, columns: slice, score: float = 0.9) -> Instance:
+    mask = np.zeros((SIDE, SIDE), dtype=bool)
+    mask[rows, columns] = True
+    return Instance(mask=mask, score=score, area=int(mask.sum()))
+
+
+def test_a_filament_grows_along_supported_pixels_it_touches() -> None:
+    """Found: columns 10-19. The second map supports columns 10-39 of the same
+    row band, so the filament extends to column 39."""
+    seed = _instance(slice(28, 32), slice(10, 20))
+    support = np.zeros((SIDE, SIDE))
+    support[28:32, 10:40] = 0.8
+
+    (grown,) = grow_instances([seed], support, threshold=0.5, max_distance=100)
+
+    assert grown.mask[28:32, 10:40].all()
+    assert grown.area == 4 * 30
+    assert grown.score == seed.score
+
+
+def test_supported_pixels_not_connected_to_a_filament_are_not_added() -> None:
+    """A separate blob of support is a detection of its own, which growing must
+    never create."""
+    seed = _instance(slice(10, 14), slice(10, 20))
+    support = np.zeros((SIDE, SIDE))
+    support[40:44, 40:50] = 0.9
+
+    (grown,) = grow_instances([seed], support, threshold=0.5, max_distance=100)
+
+    assert np.array_equal(grown.mask, seed.mask)
+
+
+def test_growth_stops_at_the_reach() -> None:
+    seed = _instance(slice(28, 32), slice(10, 20))
+    support = np.zeros((SIDE, SIDE))
+    support[28:32, 10:50] = 0.8
+
+    (grown,) = grow_instances([seed], support, threshold=0.5, max_distance=5)
+
+    columns = np.nonzero(grown.mask.any(axis=0))[0]
+    assert columns.max() == 19 + 5
+
+
+def test_support_below_the_threshold_adds_nothing() -> None:
+    seed = _instance(slice(28, 32), slice(10, 20))
+    support = np.zeros((SIDE, SIDE))
+    support[28:32, 10:40] = 0.3
+
+    (grown,) = grow_instances([seed], support, threshold=0.5, max_distance=100)
+
+    assert np.array_equal(grown.mask, seed.mask)
+
+
+def test_two_filaments_growing_towards_each_other_split_the_gap() -> None:
+    """Columns 0-9 and 50-59 found; support everywhere between. Each takes the
+    pixels nearer to it, and the two masks still never overlap."""
+    left = _instance(slice(28, 32), slice(0, 10))
+    right = _instance(slice(28, 32), slice(50, 60))
+    support = np.zeros((SIDE, SIDE))
+    support[28:32, :] = 0.9
+
+    grown_left, grown_right = grow_instances([left, right], support, 0.5, max_distance=100)
+
+    assert not (grown_left.mask & grown_right.mask).any()
+    assert grown_left.mask[28:32, :29].all() and grown_right.mask[28:32, 31:].all()
+    assert (grown_left.mask | grown_right.mask)[28:32, :].all()
+
+
+def test_nothing_in_nothing_out() -> None:
+    assert grow_instances([], np.zeros((SIDE, SIDE)), 0.5, 10) == []
+
+
+def test_a_mask_of_another_shape_is_rejected() -> None:
+    seed = _instance(slice(0, 2), slice(0, 2))
+    with pytest.raises(ValueError, match="same shape"):
+        grow_instances([seed], np.zeros((SIDE // 2, SIDE // 2)), 0.5, 10)
