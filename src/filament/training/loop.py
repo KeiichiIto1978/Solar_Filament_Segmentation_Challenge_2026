@@ -180,13 +180,23 @@ def _run_epoch(
     optimiser: torch.optim.Optimizer | None,
     scaler: torch.amp.GradScaler | None,
     max_batches: int | None,
+    accumulation_steps: int = 1,
 ) -> float:
-    """One pass over ``loader``. Trains when ``optimiser`` is given."""
+    """One pass over ``loader``. Trains when ``optimiser`` is given.
+
+    With ``accumulation_steps`` above one, gradients of that many batches are
+    summed, each scaled down by the count, before the optimiser steps: the
+    update of a batch that many times larger. A last group cut short by the end
+    of the epoch still steps.
+    """
     training = optimiser is not None
     model.train(training)
 
     total = 0.0
     batches = 0
+    if training:
+        assert optimiser is not None
+        optimiser.zero_grad(set_to_none=True)
     for batch in loader:
         if max_batches is not None and batches >= max_batches:
             break
@@ -200,21 +210,34 @@ def _run_epoch(
 
         if training:
             assert optimiser is not None
-            optimiser.zero_grad(set_to_none=True)
+            scaled = loss / accumulation_steps
             if scaler is not None:
-                scaler.scale(loss).backward()
-                scaler.step(optimiser)
-                scaler.update()
+                scaler.scale(scaled).backward()
             else:
-                loss.backward()
-                optimiser.step()
+                scaled.backward()
+            if (batches + 1) % accumulation_steps == 0:
+                _step(optimiser, scaler)
 
         total += loss.detach().item()
         batches += 1
 
+    if training and batches % accumulation_steps:
+        assert optimiser is not None
+        _step(optimiser, scaler)
+
     if batches == 0:
         raise ValueError("The loader yielded no batches; check the split and batch size.")
     return total / batches
+
+
+def _step(optimiser: torch.optim.Optimizer, scaler: torch.amp.GradScaler | None) -> None:
+    """Apply the gradients gathered so far, then clear them."""
+    if scaler is not None:
+        scaler.step(optimiser)
+        scaler.update()
+    else:
+        optimiser.step()
+    optimiser.zero_grad(set_to_none=True)
 
 
 def train(
@@ -284,6 +307,7 @@ def train(
             optimiser,
             scaler,
             config.max_train_batches,
+            config.accumulation_steps,
         )
         val_loss = _run_epoch(
             model, val_loader, criterion, target_device, None, None, config.max_val_batches

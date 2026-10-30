@@ -241,3 +241,53 @@ def test_the_spine_run_is_run_e_with_spines() -> None:
     assert {key for key in run_e["loss"] if run_e["loss"][key] != spine["loss"][key]} == {
         "spine_weight"
     }
+
+
+def _one_epoch_of_sgd(batch_size: int, accumulation_steps: int) -> torch.Tensor:
+    """The weight of a one-pixel linear model after one epoch over four samples."""
+    from torch import nn
+    from torch.utils.data import DataLoader
+
+    from filament.training.loop import _run_epoch
+
+    torch.manual_seed(0)
+    samples = [{"image": torch.randn(1, 2, 2), "target": torch.randn(1, 2, 2)} for _ in range(4)]
+    model = nn.Conv2d(1, 1, kernel_size=1, bias=False)
+    with torch.no_grad():
+        model.weight.fill_(0.5)
+    optimiser = torch.optim.SGD(model.parameters(), lr=0.1)
+    loader = DataLoader(samples, batch_size=batch_size, shuffle=False)
+    _run_epoch(
+        model, loader, nn.MSELoss(), torch.device("cpu"), optimiser, None, None, accumulation_steps
+    )
+    return model.weight.detach().clone()
+
+
+def test_accumulating_two_batches_of_one_is_one_batch_of_two() -> None:
+    """The point of accumulation: a network that fits one frame per batch is
+    updated as if it had seen two."""
+    assert torch.allclose(_one_epoch_of_sgd(1, 2), _one_epoch_of_sgd(2, 1), atol=1e-6)
+    # And it is not the same as stepping after every single frame.
+    assert not torch.allclose(_one_epoch_of_sgd(1, 1), _one_epoch_of_sgd(2, 1), atol=1e-6)
+
+
+def test_accumulation_steps_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        TrainConfig(accumulation_steps=0)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("hrnet_w48", {"encoder", "output_dir"}),
+        ("hrnet_w48_accum", {"encoder", "batch_size", "accumulation_steps", "output_dir"}),
+        ("hrnet_w32_union", {"union_targets", "output_dir"}),
+    ],
+)
+def test_each_phase_14_candidate_changes_only_what_it_names(name: str, expected: set[str]) -> None:
+    """A fold-0 screen compares each candidate with run e; it is only readable
+    if nothing else moved."""
+    run_e = TrainConfig.from_yaml(Path("configs/phase6/e_unet_hrnet.yaml")).to_dict()
+    other = TrainConfig.from_yaml(Path(f"configs/phase14/{name}.yaml")).to_dict()
+
+    assert {key for key in run_e if run_e[key] != other[key]} == expected
