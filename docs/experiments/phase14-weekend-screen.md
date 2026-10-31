@@ -111,23 +111,23 @@ covered part (0.19; 1024: 0.17).
 
 | threshold \ reach | 10 | 25 | 50 |
 |---|---|---|---|
-| 0.1 | 0.2334 | 0.0570 | 0.0222 |
-| 0.2 | 0.3148 | 0.2065 | 0.1559 |
-| 0.3 | 0.3537 | 0.2960 | 0.2652 |
-| 0.5 | 0.3886 | 0.3680 | 0.3562 |
+| 0.1 | 0.2335 | 0.0574 | 0.0224 |
+| 0.2 | 0.3148 | 0.2071 | 0.1583 |
+| 0.3 | 0.3537 | 0.2966 | 0.2675 |
+| 0.5 | 0.3887 | 0.3681 | 0.3570 |
 | not grown | **0.4127** | | |
 
-The best, threshold 0.5 and reach 10: SQ 0.6571, RQ 0.5915, TP 4,522, FP 2,570,
-FN 3,677; worse on all five folds.
+The best, threshold 0.5 and reach 10: SQ 0.6570, RQ 0.5916, TP 4,523, FP 2,569,
+FN 3,676; worse on all five folds.
 
 ### Growing along the union model's map, fold 0
 
 | threshold \ reach | 10 | 25 | 50 |
 |---|---|---|---|
-| 0.2 | 0.3527 | 0.3480 | 0.3480 |
-| 0.3 | 0.3793 | 0.3797 | 0.3801 |
+| 0.2 | 0.3527 | 0.3477 | 0.3479 |
+| 0.3 | 0.3793 | 0.3796 | 0.3802 |
 | 0.4 | 0.3908 | 0.3929 | 0.3931 |
-| 0.5 | 0.3972 | 0.3978 | 0.3993 |
+| 0.5 | 0.3972 | 0.3978 | 0.3992 |
 | not grown | **0.4016** | | |
 
 At threshold 0.2 and reach 10, TP falls by 88 and FP rises by 88.
@@ -190,7 +190,7 @@ evaluation; a gain of this size does not justify it.
 |---|---|
 | configurations | `configs/phase14/hrnet_w48.yaml`, `configs/phase14/hrnet_w32_union.yaml` (`hrnet_w48_accum.yaml` prepared, not used) |
 | notebook | `notebooks/100_train_kaggle_screen.ipynb`, Kaggle `Filament-screen` Version 1 |
-| commits | `bbcd1ce` (the Kaggle run), `d3e6b67` (the ridge response and growth) |
+| commits | `bbcd1ce` (the Kaggle run), `d3e6b67` (the ridge response), `10c9db1` (growth as scored here: each filament spreads through supported pixels from its own mask, with its reach measured from that mask) |
 | ridge diagnostic | `scripts/uncovered_ridges.py --maps <fold maps> --fold <k> --setting <Phase 10 JSON> --misses <miss_breakdown output>` |
 | growth | `scripts/grow_sweep.py --maps <run e fold maps> --fold <k> --setting <Phase 10 JSON> --support ridge` (or `--support maps/union_fold0.npz`) |
 | averaging | the two fold-0 bundles read with `load_map_bundle`, averaged pixel-wise, written with `save_map_bundle`, then `scripts/sweep_maps.py` |
