@@ -187,7 +187,8 @@ def _run_epoch(
     With ``accumulation_steps`` above one, gradients of that many batches are
     summed, each scaled down by the count, before the optimiser steps: the
     update of a batch that many times larger. A last group cut short by the end
-    of the epoch still steps.
+    of the epoch is discarded without a step, as the larger batch's loader
+    drops its incomplete last batch (``drop_last``).
     """
     training = optimiser is not None
     model.train(training)
@@ -223,7 +224,7 @@ def _run_epoch(
 
     if training and batches % accumulation_steps:
         assert optimiser is not None
-        _step(optimiser, scaler)
+        optimiser.zero_grad(set_to_none=True)
 
     if batches == 0:
         raise ValueError("The loader yielded no batches; check the split and batch size.")

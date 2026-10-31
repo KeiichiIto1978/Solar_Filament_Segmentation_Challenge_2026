@@ -12,8 +12,10 @@ the first configuration did not find is added.
 
 Growth respects two limits. A pixel is only reachable through supported pixels
 (connectivity), and no further than ``max_distance`` from where the filament
-was (reach). Where two filaments' growth meets, each pixel goes to the nearer
-one, so the masks still never overlap.
+was (reach). Each filament spreads outwards from its own mask one pixel ring at
+a time, all together, so a pixel goes to the filament whose supported path
+reaches it first: the masks never overlap, and every pixel a filament gains is
+connected to it through supported pixels.
 """
 
 from __future__ import annotations
@@ -64,18 +66,27 @@ def grow_instances(
         labels[instance.mask] = index
 
     seeds = labels > 0
-    # The nearest seed pixel of every pixel, and how far it is: growth goes to
-    # the nearer filament where two meet, and stops at max_distance.
-    distance, (nearest_rows, nearest_columns) = ndimage.distance_transform_edt(
-        ~seeds, return_indices=True
-    )
-    nearest = labels[nearest_rows, nearest_columns]
+    distance = ndimage.distance_transform_edt(~seeds)
     allowed = seeds | ((support >= threshold) & (distance <= max_distance))
-    # Only pixels connected to some filament through allowed pixels.
+    # Ownership spreads from each seed through allowed pixels only. Assigning
+    # each pixel to the globally nearest seed instead would hand a filament
+    # pixels it has no supported path to, across a gap reached from another.
     components, _ = ndimage.label(allowed, structure=_STRUCTURE)
-    reached = np.isin(components, np.unique(components[seeds]))
-    grown_labels = np.where(reached & allowed, nearest, 0)
-    grown_labels[seeds] = labels[seeds]
+    grown_labels = labels.copy()
+    steps = int(np.ceil(max_distance))
+    for index, window in enumerate(ndimage.find_objects(components), start=1):
+        if window is None:
+            continue
+        region = components[window] == index
+        owners = grown_labels[window]
+        if not owners[region].any():
+            continue
+        for _ in range(steps):
+            spread = ndimage.grey_dilation(owners, footprint=_STRUCTURE)
+            added = region & (owners == 0) & (spread > 0)
+            if not added.any():
+                break
+            owners[added] = spread[added]
 
     grown = []
     for index, instance in enumerate(instances, start=1):

@@ -243,20 +243,24 @@ def test_the_spine_run_is_run_e_with_spines() -> None:
     }
 
 
-def _one_epoch_of_sgd(batch_size: int, accumulation_steps: int) -> torch.Tensor:
-    """The weight of a one-pixel linear model after one epoch over four samples."""
+def _one_epoch_of_sgd(
+    batch_size: int, accumulation_steps: int, count: int = 4, drop_last: bool = False
+) -> torch.Tensor:
+    """The weight of a one-pixel linear model after one epoch over ``count`` samples."""
     from torch import nn
     from torch.utils.data import DataLoader
 
     from filament.training.loop import _run_epoch
 
     torch.manual_seed(0)
-    samples = [{"image": torch.randn(1, 2, 2), "target": torch.randn(1, 2, 2)} for _ in range(4)]
+    samples = [
+        {"image": torch.randn(1, 2, 2), "target": torch.randn(1, 2, 2)} for _ in range(count)
+    ]
     model = nn.Conv2d(1, 1, kernel_size=1, bias=False)
     with torch.no_grad():
         model.weight.fill_(0.5)
     optimiser = torch.optim.SGD(model.parameters(), lr=0.1)
-    loader = DataLoader(samples, batch_size=batch_size, shuffle=False)
+    loader = DataLoader(samples, batch_size=batch_size, shuffle=False, drop_last=drop_last)
     _run_epoch(
         model, loader, nn.MSELoss(), torch.device("cpu"), optimiser, None, None, accumulation_steps
     )
@@ -269,6 +273,13 @@ def test_accumulating_two_batches_of_one_is_one_batch_of_two() -> None:
     assert torch.allclose(_one_epoch_of_sgd(1, 2), _one_epoch_of_sgd(2, 1), atol=1e-6)
     # And it is not the same as stepping after every single frame.
     assert not torch.allclose(_one_epoch_of_sgd(1, 1), _one_epoch_of_sgd(2, 1), atol=1e-6)
+
+
+def test_an_incomplete_last_group_is_dropped_like_an_incomplete_last_batch() -> None:
+    """Five frames: batches of two drop the fifth (training uses ``drop_last``),
+    so two accumulated batches of one must not step on it alone either."""
+    reference = _one_epoch_of_sgd(2, 1, count=5, drop_last=True)
+    assert torch.allclose(_one_epoch_of_sgd(1, 2, count=5), reference, atol=1e-6)
 
 
 def test_accumulation_steps_must_be_positive() -> None:

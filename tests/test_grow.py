@@ -83,6 +83,21 @@ def test_two_filaments_growing_towards_each_other_split_the_gap() -> None:
     assert (grown_left.mask | grown_right.mask)[28:32, :].all()
 
 
+def test_a_filament_gains_nothing_it_has_no_supported_path_to() -> None:
+    """Support runs from filament A along row 30 and passes two pixels from
+    filament B, with an unsupported gap between. The pixels near B are reached
+    from A only, so they go to A and B stays as it was."""
+    first = _instance(slice(28, 32), slice(0, 10))
+    second = _instance(slice(34, 38), slice(30, 40))
+    support = np.zeros((SIDE, SIDE))
+    support[28:32, 10:50] = 0.9
+
+    grown_first, grown_second = grow_instances([first, second], support, 0.5, 100)
+
+    assert np.array_equal(grown_second.mask, second.mask)
+    assert grown_first.mask[28:32, 10:50].all()
+
+
 def test_nothing_in_nothing_out() -> None:
     assert grow_instances([], np.zeros((SIDE, SIDE)), 0.5, 10) == []
 
