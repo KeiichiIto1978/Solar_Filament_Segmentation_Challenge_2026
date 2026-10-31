@@ -89,6 +89,12 @@ def main(argv: list[str] | None = None) -> int:
     setting = json.loads(args.setting.read_text()) | {"output_size": FULL_HEIGHT}
     ridge = args.support == "ridge"
     others = None if ridge else load_map_bundle(Path(args.support))
+    if others is not None and not set(maps) <= set(others):
+        missing = sorted(set(maps) - set(others))
+        raise SystemExit(
+            f"{args.support} has no map for {len(missing)} of the frames in {args.maps}, "
+            f"for example {missing[0]}."
+        )
     thresholds = RIDGE_THRESHOLDS if ridge else MAP_THRESHOLDS
     grid = list(itertools.product(thresholds, REACHES))
 
