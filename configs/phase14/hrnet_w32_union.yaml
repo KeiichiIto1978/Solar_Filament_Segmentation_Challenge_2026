@@ -1,0 +1,36 @@
+# Phase 14, candidate B: run e trained on the union of a frame's annotators.
+#
+# Phase 12 traced the largest group of misses to long filaments covered only in
+# part; the union of annotators asks for every pixel anyone drew, faint ends
+# included. On ResNet-34 (run g of Phase 6b) it found more filaments and more
+# false positives. Here it is not used alone: its map extends the regions the
+# current configuration already found, which is scored afterwards.
+fold: 0
+image_size: 1024
+
+architecture: Unet
+encoder: tu-hrnet_w32
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 2
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+union_targets: true
+
+output_dir: outputs/phase14_hrnet_w32_union
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0

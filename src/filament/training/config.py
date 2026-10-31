@@ -97,6 +97,10 @@ class TrainConfig:
             resolution, instead of on whole frames shrunk to fit. Changes the
             input to three channels: the crop, its contrast-equalised version,
             and the box saying which filament is being asked for.
+        accumulation_steps: Batches whose gradients are summed before each
+            optimiser step. One steps after every batch. A larger network that
+            only fits one frame per batch can keep the effective batch of a
+            smaller one this way; the batch-norm statistics still see one frame.
     """
 
     fold: int = 0
@@ -117,6 +121,7 @@ class TrainConfig:
     vote_targets: bool = False
     union_targets: bool = False
     crops: CropConfig | None = None
+    accumulation_steps: int = 1
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     loss: LossConfig = field(default_factory=LossConfig)
 
@@ -125,6 +130,8 @@ class TrainConfig:
         # annotations have been read and a session's minutes spent.
         if self.vote_targets and self.union_targets:
             raise ValueError("Choose one of vote_targets and union_targets, not both.")
+        if self.accumulation_steps < 1:
+            raise ValueError("accumulation_steps must be at least 1.")
         if self.loss.spine_weight and self.crops is not None:
             raise ValueError("Spine targets are drawn on whole frames, not on crops.")
 

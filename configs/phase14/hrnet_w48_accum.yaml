@@ -1,0 +1,34 @@
+# Phase 14, candidate A when two frames of W48 do not fit a T4.
+#
+# One frame per batch, gradients of two batches summed before each step: the
+# update of run e's batch of two. A plain batch of one is avoided on purpose:
+# run h of Phase 6b changed the batch to one together with the resolution and
+# lost, and the two were never separated.
+fold: 0
+image_size: 1024
+
+architecture: Unet
+encoder: tu-hrnet_w48
+encoder_weights: imagenet
+
+epochs: 20
+batch_size: 1
+accumulation_steps: 2
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+
+seed: 20260921
+
+num_workers: 0
+amp: true
+
+output_dir: outputs/phase14_hrnet_w48_accum
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  quarter_turns: true
+
+loss:
+  dice_weight: 1.0
+  bce_weight: 1.0
