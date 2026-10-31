@@ -82,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"Some maps in {args.maps} are not held out of fold {args.fold}.")
     if set(misses["fold"]) != {args.fold} or not set(misses["stem"]) <= held_out:
         raise SystemExit(f"{args.misses} is not the miss breakdown of fold {args.fold}.")
+    if set(misses["stem"]) != set(maps):
+        raise SystemExit(
+            f"{args.misses} and {args.maps} cover different frames; "
+            "the miss breakdown has to be made from the same maps."
+        )
     partly = misses[misses["outcome"] == "too_small"]
     matched = misses[misses["outcome"] == "matched"].sample(
         n=min(MATCHED_SAMPLE, int((misses["outcome"] == "matched").sum())), random_state=0

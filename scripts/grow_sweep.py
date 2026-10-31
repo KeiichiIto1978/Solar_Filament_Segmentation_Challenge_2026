@@ -72,11 +72,19 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     paths = load_paths().require_dataset()
     maps = load_map_bundle(args.maps)
-    strangers = set(maps) - set(load_fold(args.fold, paths.splits_dir).val)
+    held_out = set(load_fold(args.fold, paths.splits_dir).val)
+    strangers = set(maps) - held_out
     if strangers:
         raise SystemExit(
             f"{len(strangers)} maps in {args.maps} are not held out of fold {args.fold}, "
             f"for example {sorted(strangers)[0]}. Scoring them would score frames the model saw."
+        )
+    if len(maps) < len(held_out):
+        logger.warning(
+            "Only %d of the %d frames held out of fold %d have a map; the score covers those only.",
+            len(maps),
+            len(held_out),
+            args.fold,
         )
     setting = json.loads(args.setting.read_text()) | {"output_size": FULL_HEIGHT}
     ridge = args.support == "ridge"
@@ -126,7 +134,16 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("%s -> %s", name, result)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        json.dumps({"fold": args.fold, "support": args.support, "results": results}, indent=1),
+        json.dumps(
+            {
+                "fold": args.fold,
+                "frames": len(maps),
+                "held_out": len(held_out),
+                "support": args.support,
+                "results": results,
+            },
+            indent=1,
+        ),
         encoding="utf-8",
     )
     logger.info(
