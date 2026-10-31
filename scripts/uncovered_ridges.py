@@ -32,6 +32,7 @@ from filament.data.coco import load_annotations
 from filament.data.disk import detect_disk
 from filament.data.image import FULL_SIZE, load_grayscale
 from filament.data.ridges import dark_ridge_response
+from filament.data.split import load_fold
 from filament.paths import load_paths
 from filament.postprocess.search import load_map_bundle, resampled_builder
 from filament.submit.rle import FULL_HEIGHT
@@ -76,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     maps = load_map_bundle(args.maps)
     setting = json.loads(args.setting.read_text()) | {"output_size": FULL_HEIGHT}
     misses = pd.read_csv(args.misses)
+    held_out = set(load_fold(args.fold, paths.splits_dir).val)
+    if not set(maps) <= held_out:
+        raise SystemExit(f"Some maps in {args.maps} are not held out of fold {args.fold}.")
+    if set(misses["fold"]) != {args.fold} or not set(misses["stem"]) <= held_out:
+        raise SystemExit(f"{args.misses} is not the miss breakdown of fold {args.fold}.")
     partly = misses[misses["outcome"] == "too_small"]
     matched = misses[misses["outcome"] == "matched"].sample(
         n=min(MATCHED_SAMPLE, int((misses["outcome"] == "matched").sum())), random_state=0
