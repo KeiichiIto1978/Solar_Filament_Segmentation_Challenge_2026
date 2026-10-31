@@ -1,0 +1,40 @@
+{
+ "setting": {
+  "resolution": 2048,
+  "threshold": 0.4,
+  "min_area": 400,
+  "join_gap": 16.0,
+  "join_offset": 12.0,
+  "min_score": 0.65
+ },
+ "pq": 0.412680862027299,
+ "sq": 0.671594621249407,
+ "rq": 0.6144791053560918,
+ "tp": 4698,
+ "fp": 2394,
+ "fn": 3501,
+ "per_fold_pq": [
+  0.4015841976494096,
+  0.4113801141612861,
+  0.41204145514473867,
+  0.4228614179468065,
+  0.4160813803960716
+ ],
+ "matched_iou": {
+  "mean": 0.671594621249407,
+  "median": 0.6744470975396712
+ },
+ "matched_dice": {
+  "mean": 0.8004759454669359,
+  "median": 0.8055758804255961
+ },
+ "frame_dice": {
+  "mean": 0.6648920666817586,
+  "median": 0.7005705484206872,
+  "annotator_images": 1154
+ },
+ "annotated_filaments": 8199,
+ "predicted_filaments": 4352,
+ "split_one_to_many": 396,
+ "fused_many_to_one": 186
+}
