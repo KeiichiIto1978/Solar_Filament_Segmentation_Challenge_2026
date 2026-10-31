@@ -35,6 +35,7 @@ from filament.data.coco import load_annotations
 from filament.data.disk import detect_disk
 from filament.data.image import FULL_SIZE, load_grayscale
 from filament.data.ridges import dark_ridge_response
+from filament.data.split import load_fold
 from filament.metrics.pq import compute_pq
 from filament.paths import load_paths
 from filament.postprocess.grow import grow_instances
@@ -71,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     paths = load_paths().require_dataset()
     maps = load_map_bundle(args.maps)
+    strangers = set(maps) - set(load_fold(args.fold, paths.splits_dir).val)
+    if strangers:
+        raise SystemExit(
+            f"{len(strangers)} maps in {args.maps} are not held out of fold {args.fold}, "
+            f"for example {sorted(strangers)[0]}. Scoring them would score frames the model saw."
+        )
     setting = json.loads(args.setting.read_text()) | {"output_size": FULL_HEIGHT}
     ridge = args.support == "ridge"
     others = None if ridge else load_map_bundle(Path(args.support))
