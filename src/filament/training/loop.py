@@ -379,3 +379,27 @@ def load_checkpoint(
     model.load_state_dict(payload["model"])
     model.to(target_device).eval()
     return model, stored
+
+
+def export_for_inference(source: Path | str, target: Path | str) -> Path:
+    """Write a checkpoint's weights in half precision, for committing to the repository.
+
+    A training checkpoint of HRNet-W32 is about 145 MB, beyond the 100 MB GitHub
+    accepts for one file; in half precision it is about half that. Only
+    floating-point tensors are converted: integer buffers such as batch-norm
+    counters keep their type. ``load_checkpoint`` reads the result unchanged,
+    because loading a state dict casts each tensor to the type of the parameter
+    it fills, so the model still runs in single precision.
+
+    Returns:
+        The path written.
+    """
+    payload = torch.load(Path(source), map_location="cpu", weights_only=False)
+    payload["model"] = {
+        name: tensor.half() if tensor.is_floating_point() else tensor
+        for name, tensor in payload["model"].items()
+    }
+    target_path = Path(target)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, target_path)
+    return target_path

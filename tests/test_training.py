@@ -9,10 +9,12 @@ import pytest
 import torch
 import yaml
 
+from filament.models.segmentation import ModelConfig, build_model
 from filament.paths import ProjectPaths
 from filament.training.config import TrainConfig
 from filament.training.loop import (
     CHECKPOINT_NAME,
+    export_for_inference,
     load_checkpoint,
     resolve_device,
     seed_everything,
@@ -302,3 +304,49 @@ def test_each_phase_14_candidate_changes_only_what_it_names(name: str, expected:
     other = TrainConfig.from_yaml(Path(f"configs/phase14/{name}.yaml")).to_dict()
 
     assert {key for key in run_e if run_e[key] != other[key]} == expected
+
+
+def test_half_precision_weights_reload_and_predict_as_the_original(tmp_path: Path) -> None:
+    """The committed weights are the training checkpoint in half precision.
+
+    They must rebuild the same network from the file alone, predict what the
+    original predicts up to half-precision rounding, and take about half the
+    space -- the reason for the conversion is GitHub's 100 MB limit per file.
+    """
+    torch.manual_seed(0)
+    config = TrainConfig(encoder="resnet18", encoder_weights=None, image_size=64)
+    model = build_model(ModelConfig(encoder_name="resnet18", encoder_weights=None))
+    source = tmp_path / "best.pt"
+    torch.save({"model": model.state_dict(), "config": config.to_dict(), "epoch": 3}, source)
+
+    target = export_for_inference(source, tmp_path / "weights" / "fold0.pt")
+
+    original, _ = load_checkpoint(source, device="cpu")
+    reloaded, stored = load_checkpoint(target, device="cpu")
+    assert stored["encoder"] == "resnet18"
+    assert all(parameter.dtype == torch.float32 for parameter in reloaded.parameters())
+    frame = torch.rand(1, 2, 64, 64)
+    with torch.no_grad():
+        expected = torch.sigmoid(original(frame))
+        actual = torch.sigmoid(reloaded(frame))
+    assert torch.allclose(actual, expected, atol=1e-2)
+    assert target.stat().st_size < 0.6 * source.stat().st_size
+
+
+def test_integer_buffers_keep_their_type_in_half_precision(tmp_path: Path) -> None:
+    """Batch-norm counters are integers; casting them would corrupt nothing
+    visible today but would no longer be the trained state."""
+    config = TrainConfig(encoder="resnet18", encoder_weights=None)
+    model = build_model(ModelConfig(encoder_name="resnet18", encoder_weights=None))
+    source = tmp_path / "best.pt"
+    torch.save({"model": model.state_dict(), "config": config.to_dict()}, source)
+
+    target = export_for_inference(source, tmp_path / "half.pt")
+
+    weights = torch.load(target, weights_only=False)["model"]
+    counters = [name for name in weights if name.endswith("num_batches_tracked")]
+    assert counters
+    assert all(weights[name].dtype == torch.int64 for name in counters)
+    assert all(
+        tensor.dtype == torch.float16 for tensor in weights.values() if tensor.is_floating_point()
+    )

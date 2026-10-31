@@ -231,6 +231,8 @@ kaggle.json
 *.pth
 *.ckpt
 *.onnx
+# The final configuration's weights, in half precision (scripts/export_weights.py).
+!weights/*.pt
 outputs/
 submissions/
 
