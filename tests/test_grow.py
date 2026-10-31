@@ -98,6 +98,36 @@ def test_a_filament_gains_nothing_it_has_no_supported_path_to() -> None:
     assert grown_first.mask[28:32, 10:50].all()
 
 
+def test_the_reach_is_measured_from_the_filament_that_grows() -> None:
+    """Support runs from A along rows 28-31 out to column 59; B sits beside the
+    far end across an unsupported gap. With a reach of 10, A stops ten columns
+    past its own end, however close B is to the pixels beyond."""
+    first = _instance(slice(28, 32), slice(0, 10))
+    second = _instance(slice(34, 38), slice(30, 60))
+    support = np.zeros((SIDE, SIDE))
+    support[28:32, 10:60] = 0.9
+
+    grown_first, grown_second = grow_instances([first, second], support, 0.5, 10)
+
+    columns = np.nonzero(grown_first.mask.any(axis=0))[0]
+    assert columns.max() == 9 + 10
+    assert np.array_equal(grown_second.mask, second.mask)
+
+
+def test_a_winding_path_is_followed_to_its_end_within_reach() -> None:
+    """A U-shaped band of support whose far arm ends 5 pixels from the seed but
+    over 40 steps along the band: every pixel is within reach, so all are taken."""
+    seed = _instance(slice(10, 14), slice(10, 14))
+    support = np.zeros((SIDE, SIDE))
+    support[10:14, 14:30] = 0.9  # out along the top
+    support[10:20, 26:30] = 0.9  # down
+    support[16:20, 14:30] = 0.9  # back along the bottom, ending under the seed
+
+    (grown,) = grow_instances([seed], support, threshold=0.5, max_distance=20)
+
+    assert grown.mask[16:20, 14:18].all()
+
+
 def test_nothing_in_nothing_out() -> None:
     assert grow_instances([], np.zeros((SIDE, SIDE)), 0.5, 10) == []
 

@@ -11,11 +11,12 @@ into the pixels the second map supports and that connect to it, and nothing
 the first configuration did not find is added.
 
 Growth respects two limits. A pixel is only reachable through supported pixels
-(connectivity), and no further than ``max_distance`` from where the filament
-was (reach). Each filament spreads outwards from its own mask one pixel ring at
-a time, all together, so a pixel goes to the filament whose supported path
-reaches it first: the masks never overlap, and every pixel a filament gains is
-connected to it through supported pixels.
+(connectivity), and no further than ``max_distance`` from the original mask of
+the filament that takes it (reach). Each filament spreads outwards from its own
+mask one pixel ring at a time, in turn, until none can spread further, so a
+pixel goes to the filament whose supported path reaches it first (the earlier
+filament on a tie): the masks never overlap, and every pixel a filament gains
+is connected to it through supported pixels.
 """
 
 from __future__ import annotations
@@ -65,28 +66,35 @@ def grow_instances(
             )
         labels[instance.mask] = index
 
-    seeds = labels > 0
-    distance = ndimage.distance_transform_edt(~seeds)
-    allowed = seeds | ((support >= threshold) & (distance <= max_distance))
-    # Ownership spreads from each seed through allowed pixels only. Assigning
-    # each pixel to the globally nearest seed instead would hand a filament
-    # pixels it has no supported path to, across a gap reached from another.
-    components, _ = ndimage.label(allowed, structure=_STRUCTURE)
+    supported = support >= threshold
+    margin = int(np.ceil(max_distance)) + 1
+    # Each filament's reach, measured from its own mask in a window around it:
+    # a distance from all the masks together would let one filament claim
+    # pixels within reach only of a neighbour.
+    reaches = []
+    for index, window in enumerate(ndimage.find_objects(labels), start=1):
+        assert window is not None
+        window = tuple(
+            slice(max(part.start - margin, 0), min(part.stop + margin, size))
+            for part, size in zip(window, shape, strict=True)
+        )
+        distance = ndimage.distance_transform_edt(labels[window] != index)
+        reaches.append((index, window, supported[window] & (distance <= max_distance)))
+
     grown_labels = labels.copy()
-    steps = int(np.ceil(max_distance))
-    for index, window in enumerate(ndimage.find_objects(components), start=1):
-        if window is None:
-            continue
-        region = components[window] == index
-        owners = grown_labels[window]
-        if not owners[region].any():
-            continue
-        for _ in range(steps):
-            spread = ndimage.grey_dilation(owners, footprint=_STRUCTURE)
-            added = region & (owners == 0) & (spread > 0)
-            if not added.any():
-                break
-            owners[added] = spread[added]
+    spreading = True
+    while spreading:
+        spreading = False
+        for index, window, reach in reaches:
+            owners = grown_labels[window]
+            ring = (
+                ndimage.binary_dilation(owners == index, structure=_STRUCTURE)
+                & reach
+                & (owners == 0)
+            )
+            if ring.any():
+                owners[ring] = index
+                spreading = True
 
     grown = []
     for index, instance in enumerate(instances, start=1):
