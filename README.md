@@ -14,27 +14,66 @@ Only pairs above IoU 0.5 are true positives, and the score is computed once per
 *annotator-image*: an image annotated by three people is scored three times,
 against three different ground truths.
 
-## Status
+## The final configuration
 
-**Phase 1 — semantic baseline.** A U-Net predicts one binary mask over the
-whole disk and instances are recovered from its connected regions, which makes
-overlapping masks impossible by construction. The target for this phase is
-local PQ 0.25 on fold 0.
-
-What works today:
-
-- the annotation file is read into a form that keeps annotators separate;
-- PQ is computed locally, broken down into SQ, RQ, TP, FP and FN;
-- fused and split filaments are counted separately, since PQ charges for both
-  without saying which one happened;
-- the solar disk is located, so predictions in the sky can be discarded;
-- a submission can be checked for overlapping masks before it is uploaded;
-- the cross-validation split is frozen and committed;
-- training, evaluation and test-set prediction run from the command line.
+| | |
+|---|---|
+| model | U-Net with an HRNet-W32 encoder (ImageNet initialisation), 1024 x 1024 input, two channels: the frame and the frame after CLAHE |
+| training | per-annotator targets, Dice + BCE, AdamW with cosine decay, 20 epochs, flips and quarter turns; one model per fold of a five-fold split grouped by frame |
+| inference | each model averaged over the eight flips and quarter turns, then the five models averaged |
+| post-processing | map upsampled to 2048, threshold 0.40, fragments rejoined across short collinear gaps, regions under 400 px and regions of mean probability under 0.65 dropped, predictions off the solar disk removed |
+| score | pooled five-fold PQ **0.4127** (SQ 0.6716, RQ 0.6145); public leaderboard **0.36** |
 
 Scoring one annotator's drawing against the other annotators of the same image
-gives PQ 0.73 on fold 0, which is the practical ceiling this pipeline is
-measured against.
+gives PQ 0.73 on fold 0, the practical ceiling for this task.
+
+## Evaluation
+
+Over the five folds, each fold model scoring the frames held out of its
+training (707 frames, 1,154 annotator-images, 8,199 annotated filaments), with
+the final post-processing:
+
+| PQ | SQ | RQ | TP | FP | FN | Dice of matches | Dice per frame | split (1 to many) | fused (many to 1) |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.4127 | 0.6716 | 0.6145 | 4,698 | 2,394 | 3,501 | 0.800 | 0.665 | 396 | 186 |
+
+*Dice of matches* is the mean Dice of the filaments matched at IoU above 0.5;
+*Dice per frame* compares all predicted pixels with all pixels one annotator
+drew, averaged over annotator-images. Split counts annotated filaments covered
+by more than one prediction, fused counts predictions covering more than one
+annotated filament. Regenerate the numbers and figures in
+[`docs/figures/`](docs/figures/) with `scripts/evaluation_report.py` from the
+stored cross-validation maps.
+
+![IoU and Dice distributions](docs/figures/distributions.png)
+
+## Reproducing the submission
+
+The trained weights are in [`weights/`](weights/), one file per fold, in half
+precision (72.8 MB each, under GitHub's 100 MB limit per file; they are restored
+to single precision when loaded).
+
+**Notebook.** [`notebooks/99_full_pipeline.ipynb`](notebooks/99_full_pipeline.ipynb)
+runs the whole pipeline from those weights: it writes both submissions, checks
+the weights on frames held out of training, and shows the predictions on the
+images. On Kaggle, attach the competition data, turn on the internet and select
+a GPU.
+
+**Command line.** With the dataset in place (see below):
+
+```bash
+uv run python scripts/predict_final.py --output outputs/final
+```
+
+Both write `submission.csv` (the final configuration) and
+`submission_no_score_cut.csv` (the same without the cut on mean probability,
+pooled PQ 0.4065, leaderboard 0.36), each checked for overlapping masks.
+
+**Retraining.** The five fold models were trained on Kaggle with
+[`notebooks/70_train_kaggle_cv_ensemble.ipynb`](notebooks/70_train_kaggle_cv_ensemble.ipynb)
+from [`configs/phase6/e_unet_hrnet.yaml`](configs/phase6/e_unet_hrnet.yaml)
+(about two hours per fold on a T4). Convert the resulting checkpoints with
+`scripts/export_weights.py`.
 
 ## Requirements
 
@@ -76,7 +115,7 @@ attach the competition data. The first cell brings the code in:
 
 ```python
 !git clone -q https://github.com/KeiichiIto1978/Solar_Filament_Segmentation_Challenge_2026.git /kaggle/working/repo
-!pip install -q segmentation-models-pytorch
+!pip install -q "segmentation-models-pytorch==0.5.0" "timm==1.0.29"
 import sys; sys.path.insert(0, "/kaggle/working/repo/src")
 ```
 
@@ -216,19 +255,35 @@ filament_id,segmentation_rle
 One record per phase, in [`docs/experiments/`](docs/experiments/): what was
 built, what it measured, what was learned, and what came next.
 
+Scores are fold 0 PQ until Phase 7, pooled five-fold PQ from then on.
+
 | Phase | Outcome |
 |---|---|
 | [0 — Evaluation foundation](docs/experiments/phase0-evaluation-foundation.md) | PQ measurable locally; human agreement puts the ceiling at PQ 0.73 |
 | [1 — Semantic baseline](docs/experiments/phase1-semantic-baseline.md) | fold 0 PQ 0.3454, leaderboard 0.29 |
 | [2 — Choosing the source of the masks](docs/experiments/phase2-mask-source.md) | U-Net kept; a filter bank reached PQ 0.16 at fifteen times the cost |
 | [3 — Tuning the post-processing](docs/experiments/phase3-postprocessing.md) | fold 0 PQ 0.3756, from rejoining fragments and a larger minimum area |
+| [4 — Training on the share of annotators](docs/experiments/phase4-vote-targets.md) | rejected |
+| [5 — Charging for a filament predicted as two](docs/experiments/phase5-centreline-loss.md) | rejected |
+| [6 — Instances and pixels](docs/experiments/phase6-instances-and-pixels.md) | nothing adopted; three of four encoders lose for lack of a half-resolution feature map |
+| [6b — Target, resolution and encoder](docs/experiments/phase6b-target-resolution-encoder.md) | HRNet-W32 at 1024 adopted, fold 0 PQ 0.3815 |
+| [7 — Five folds and an ensemble](docs/experiments/phase7-cross-validation-ensemble.md) | pooled PQ 0.3807; five-model ensemble, leaderboard 0.34 |
+| [8 — Test-time augmentation](docs/experiments/phase8-tta-and-model-mix.md) | eight views adopted, 0.3998, leaderboard 0.35; mixing two model types not worth it |
+| [9 — Post-processing for the eight-view maps](docs/experiments/phase9-postprocessing-for-tta.md) | 2048 and threshold 0.40 adopted, 0.4065, leaderboard 0.36 |
+| [10 — False positives and a score cut](docs/experiments/phase10-false-positives-and-score-cut.md) | cut on mean probability 0.65 adopted, **0.4127**, leaderboard 0.36 |
+| [11 — Judging each candidate from several features](docs/experiments/phase11-candidate-filter.md) | +0.0018, not adopted |
+| [12 — Where the misses come from](docs/experiments/phase12-where-the-misses-come-from.md) | about 60% of misses are filaments the model does not see, or sees a third of |
+| [13 — The annotators' spines as a second target](docs/experiments/phase13-spine-target.md) | +0.0021 on fold 0, not adopted |
+| [14 — A larger network, a union target, growing into the faint ends](docs/experiments/phase14-weekend-screen.md) | nothing adopted; the Phase 10 configuration is final |
 
 ## Repository layout
 
 ```
-configs/            paths.yaml, the frozen splits, training settings
-notebooks/          00_eda.ipynb, 10_train_kaggle.ipynb
+configs/            paths.yaml, the frozen splits, training settings per phase
+docs/experiments/   one record per phase
+notebooks/          00_eda.ipynb, the Kaggle training notebooks, 99_full_pipeline.ipynb
 scripts/            command line entry points
+weights/            the five fold models of the final configuration
 src/filament/
 ├── data/           COCO reading, splits, frames, solar disk, torch dataset
 ├── models/         the U-Net and its loss
@@ -236,7 +291,8 @@ src/filament/
 ├── postprocess/    probability map to non-overlapping instances
 ├── metrics/        Panoptic Quality, submission overlap check
 ├── submit/         RLE encoding, submission CSV
-└── evaluation.py   inference and scoring
+├── evaluation.py   inference, test-time augmentation and scoring
+└── pipeline.py     the final configuration, from weights to submission
 tests/
 ```
 
