@@ -1,7 +1,8 @@
 # Contributing
 
-How this repository is worked on, and the rules followed throughout the
-competition (by hand and by the coding agent used along the way).
+How this repository is worked on. `CLAUDE.md` holds the same rules for the
+coding agent used during the competition, in Japanese; this file is the English
+version for everyone else.
 
 ## Ground rules
 
