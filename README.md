@@ -57,7 +57,9 @@ to single precision when loaded).
 runs the whole pipeline from those weights: it writes both submissions, checks
 the weights on frames held out of training, and shows the predictions on the
 images. On Kaggle, attach the competition data, turn on the internet and select
-a GPU.
+a GPU. On one T4 the whole notebook takes about 26 minutes: 6.1 s per test frame
+for the 40 forward passes, and the fold-0 check gives PQ 0.4018 against the
+recorded 0.4016.
 
 **Command line.** With the dataset in place (see below):
 
