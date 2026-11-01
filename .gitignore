@@ -219,7 +219,9 @@ __marimo__/
 
 MAGFiLO_1.0_Kaggle_2026/
 Working/
-# Claude Code local settings (CLAUDE.md itself IS tracked)
+# Coding-agent instructions, kept locally: their content is in CONTRIBUTING.md,
+# and they point at Working/, which is not published.
+CLAUDE.md
 .claude/
 .mcp.json
 
